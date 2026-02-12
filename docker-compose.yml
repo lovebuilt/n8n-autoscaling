@@ -3,6 +3,7 @@ volumes:
   redis_data:
   n8n_main:
   n8n_webhook:
+  backup_data:
 
 networks:
   n8n-network:
@@ -237,6 +238,41 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  n8n-backup:
+    profiles: [backup]
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - n8n_main:/data/n8n_main:ro
+      - n8n_webhook:/data/n8n_webhook:ro
+      - backup_data:/backups
+#      - ./backup/rclone.conf:/config/rclone/rclone.conf:ro  # Uncomment after creating rclone.conf from rclone.conf.example
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - BACKUP_SCHEDULE=${BACKUP_SCHEDULE:-0 2 * * *}
+      - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+      - BACKUP_ENCRYPTION_KEY=${BACKUP_ENCRYPTION_KEY:-}
+      - BACKUP_RCLONE_DESTINATIONS=${BACKUP_RCLONE_DESTINATIONS:-}
+      - BACKUP_RUN_ON_START=${BACKUP_RUN_ON_START:-false}
+      - BACKUP_DELETE_LOCAL_AFTER_UPLOAD=${BACKUP_DELETE_LOCAL_AFTER_UPLOAD:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_TO=${SMTP_TO:-}
+      - BACKUP_WEBHOOK_URL=${BACKUP_WEBHOOK_URL:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - n8n-network
 
   redis-monitor:
     build:

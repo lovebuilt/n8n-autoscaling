@@ -49,6 +49,7 @@ graph TD
 | `postgres` | Database (with pgvector) |
 | `n8n-autoscaler` | Monitors queue and scales workers + runners |
 | `redis-monitor` | Queue monitoring |
+| `n8n-backup` | Scheduled backups to cloud storage (optional) |
 | `cloudflared` | Cloudflare tunnel |
 
 ## Features
@@ -324,6 +325,106 @@ docker compose logs -f n8n-autoscaler
 docker compose logs -f n8n-task-runner n8n-worker-runner
 ```
 
+## Backup Configuration
+
+The `n8n-backup` service provides scheduled backups of your PostgreSQL database and n8n volume data, with optional encryption and multi-cloud storage upload via [rclone](https://rclone.org/).
+
+### What Gets Backed Up
+
+- **PostgreSQL database** (workflows, credentials, executions, users) via `pg_dump`
+- **n8n volume data** (custom nodes, local file storage) via tar archive
+- Everything bundled into a single timestamped `.tar.gz` archive
+
+### Quick Setup
+
+1. Copy the example rclone config:
+   ```bash
+   cp backup/rclone.conf.example backup/rclone.conf
+   ```
+
+2. Edit `backup/rclone.conf` with your cloud storage credentials (see [rclone docs](https://rclone.org/docs/) for your provider)
+
+3. Uncomment the rclone.conf volume mount in `docker-compose.yml`:
+   ```yaml
+   - ./backup/rclone.conf:/config/rclone/rclone.conf:ro
+   ```
+
+4. Add backup settings to your `.env`:
+   ```env
+   COMPOSE_PROFILES=backup
+   BACKUP_RCLONE_DESTINATIONS=r2:my-bucket/n8n-backups
+   BACKUP_SCHEDULE=0 2 * * *
+   ```
+
+5. Start the backup service:
+   ```bash
+   docker compose up -d
+   ```
+   Or start it explicitly without modifying `.env`:
+   ```bash
+   docker compose --profile backup up -d
+   ```
+
+### Backup Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BACKUP_SCHEDULE` | Cron schedule for backups | `0 2 * * *` (daily 2 AM) |
+| `BACKUP_RETENTION_DAYS` | Days to keep old backups | `30` |
+| `BACKUP_ENCRYPTION_KEY` | GPG passphrase (empty = no encryption) | (empty) |
+| `BACKUP_RCLONE_DESTINATIONS` | Comma-separated rclone remotes | (empty = local only) |
+| `BACKUP_RUN_ON_START` | Run backup immediately on container start | `false` |
+| `BACKUP_DELETE_LOCAL_AFTER_UPLOAD` | Delete local copy after successful remote upload | `false` |
+| `BACKUP_WEBHOOK_URL` | Webhook URL for notifications | (empty) |
+| `SMTP_HOST` | SMTP server for email notifications | (empty) |
+| `SMTP_PORT` | SMTP port | `587` |
+| `SMTP_USER` | SMTP username | (empty) |
+| `SMTP_PASSWORD` | SMTP password | (empty) |
+| `SMTP_TO` | Notification email recipient | (empty) |
+
+### Multiple Cloud Destinations
+
+Upload to multiple providers simultaneously by comma-separating destinations:
+```env
+BACKUP_RCLONE_DESTINATIONS=r2:my-bucket/n8n,s3:backup-bucket/n8n,b2:my-b2-bucket/n8n
+```
+
+### Testing Backups
+
+Run a one-off backup to verify your configuration:
+```env
+BACKUP_RUN_ON_START=true
+```
+```bash
+docker compose --profile backup up n8n-backup
+```
+
+### Restoring from a Backup
+
+1. **Decrypt** (if encrypted):
+   ```bash
+   gpg --decrypt n8n-backup-TIMESTAMP.tar.gz.gpg > n8n-backup-TIMESTAMP.tar.gz
+   ```
+
+2. **Extract** the archive:
+   ```bash
+   tar xzf n8n-backup-TIMESTAMP.tar.gz
+   ```
+
+3. **Restore the database**:
+   ```bash
+   docker compose exec -T postgres pg_restore -U postgres -d n8n --clean --if-exists < database.dump
+   ```
+
+4. **Restore volume data** (stop n8n first):
+   ```bash
+   docker compose stop n8n n8n-worker n8n-webhook
+   tar xzf volumes.tar.gz -C /var/lib/docker/volumes/n8n-autoscaling_n8n_main/_data/
+   docker compose start n8n n8n-worker n8n-webhook
+   ```
+
+**Important:** Your `N8N_ENCRYPTION_KEY` and `N8N_USER_MANAGEMENT_JWT_SECRET` must match the values used when the backup was created, otherwise n8n credentials cannot be decrypted. Keep these values safe separately from your backups.
+
 ## Updating
 
 To update:
@@ -386,6 +487,10 @@ https://webhook.yourdomain.com/webhook/your-webhook-id
 ├── autoscaler/
 │   ├── Dockerfile            # Autoscaler container
 │   └── autoscaler.py         # Scaling logic
+├── backup/
+│   ├── Dockerfile            # Backup container
+│   ├── backup.py             # Backup logic (pg_dump + rclone)
+│   └── rclone.conf.example   # Example rclone storage config
 └── monitor/
     └── monitor.Dockerfile    # Redis monitor container
 ```
