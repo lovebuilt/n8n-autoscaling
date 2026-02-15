@@ -1,3 +1,20 @@
-# .gitignore
+# Secrets — NEVER commit
 .env
+.env.*
+!.env.example
+
+# Claude Code local state
 .claude/
+
+# Backup artifacts (prevent accidental commits)
+*.log
+*.dump
+*.tar.gz
+/backups/
+
+# OS artifacts
+.DS_Store
+*.swp
+*.swo
+*~
+
