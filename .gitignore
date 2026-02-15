@@ -18,3 +18,9 @@
 *.swo
 *~
 
+
+# Generated build files (created by custom/build.py, not edited manually)
+Dockerfile.build
+Dockerfile.runner.build
+n8n-task-runners.build.json
+.build-backups/

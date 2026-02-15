@@ -1,8 +1,5 @@
 # Multi-stage build to add dependencies to n8n runners
 # This works around the issue where n8nio/runners v2.1.0+ removed apk
-#
-# These tools are for CODE NODES (JS require() and Python import).
-# Execute Command nodes run in the main container — see Dockerfile.
 
 # Stage 1: Build dependencies in Alpine (must match n8nio/runners base version)
 FROM alpine:3.23 AS builder
@@ -18,18 +15,7 @@ RUN apk add --no-cache \
     git \
     openssh-client \
     graphicsmagick \
-    imagemagick \
-    # PDF processing
-    poppler-utils \
-    poppler-data \
-    ghostscript \
-    # OCR
-    tesseract-ocr \
-    tesseract-ocr-data-eng \
-    # Fonts for proper PDF text rendering
-    font-noto-cjk \
-    font-dejavu \
-    font-liberation
+    imagemagick
 
 # Stage 2: Copy to runners image
 FROM n8nio/runners:latest
@@ -39,8 +25,6 @@ USER root
 # Copy all libraries from builder (chromium has many dependencies)
 COPY --from=builder /usr/lib/ /usr/lib/
 COPY --from=builder /usr/share/fonts/ /usr/share/fonts/
-COPY --from=builder /usr/share/ghostscript/ /usr/share/ghostscript/
-COPY --from=builder /usr/share/tessdata/ /usr/share/tessdata/
 
 # Copy binaries from builder
 COPY --from=builder /usr/bin/chromium-browser /usr/bin/chromium-browser
@@ -54,24 +38,11 @@ COPY --from=builder /usr/bin/convert /usr/bin/convert
 COPY --from=builder /usr/bin/identify /usr/bin/identify
 COPY --from=builder /usr/bin/mogrify /usr/bin/mogrify
 COPY --from=builder /usr/bin/composite /usr/bin/composite
-# PDF processing binaries (poppler-utils)
-COPY --from=builder /usr/bin/pdftoppm /usr/bin/pdftoppm
-COPY --from=builder /usr/bin/pdftotext /usr/bin/pdftotext
-COPY --from=builder /usr/bin/pdfinfo /usr/bin/pdfinfo
-COPY --from=builder /usr/bin/pdfimages /usr/bin/pdfimages
-COPY --from=builder /usr/bin/pdfseparate /usr/bin/pdfseparate
-COPY --from=builder /usr/bin/pdfunite /usr/bin/pdfunite
-# Ghostscript
-COPY --from=builder /usr/bin/gs /usr/bin/gs
-# Tesseract OCR
-COPY --from=builder /usr/bin/tesseract /usr/bin/tesseract
 
 # Create symlink for chromium-browser wrapper script
 RUN ln -sf /usr/lib/chromium/chromium /usr/bin/chromium
 
 # Install npm packages in the task runner's node_modules directory
-# NOTE: pdf-poppler intentionally excluded — it calls process.exit(1) on Linux
-# which kills the entire JS runner process. Use native poppler-utils CLI instead.
 WORKDIR /opt/runners/task-runner-javascript
 RUN /usr/local/bin/node /usr/local/lib/node_modules/corepack/dist/corepack.js pnpm add \
     ajv \
@@ -80,17 +51,14 @@ RUN /usr/local/bin/node /usr/local/lib/node_modules/corepack/dist/corepack.js pn
     puppeteer-extra \
     puppeteer-extra-plugin-stealth \
     playwright-core \
-    playwright-extra \
-    sharp
+    playwright-extra
 
 # Install Python packages in the task runner's venv
 RUN /usr/local/bin/uv pip install --python /opt/runners/task-runner-python/.venv/bin/python --no-cache \
     requests \
     pillow \
     pandas \
-    numpy \
-    pdf2image \
-    PyPDF2
+    numpy
 
 # Copy custom task runner config that:
 # - Removes --disable-proto=delete flag (allows puppeteer/playwright to work)

@@ -3,6 +3,12 @@ set -e
 
 # upstream-sync.sh — Safely merge upstream changes into your fork
 # Usage: ./upstream-sync.sh [check|merge|abort|done]
+#
+# LAYERED ARCHITECTURE:
+#   Upstream's Dockerfiles stay clean in git (no conflicts on merge).
+#   Your additions live in custom/config.json.
+#   After merge, custom/build.py generates .build files with your packages injected.
+#   docker-compose.override.yml points Docker to the .build files.
 
 cd "$(dirname "$0")"
 UPSTREAM="upstream/main"
@@ -12,6 +18,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
+
+rebuild_customizations() {
+    echo ""
+    echo -e "${CYAN}Re-applying your customizations...${NC}"
+    python3 custom/build.py
+}
 
 case "${1:-check}" in
 
@@ -37,13 +49,7 @@ check)
     git diff --stat main $UPSTREAM
     echo ""
 
-    # Check for likely conflicts
-    CONFLICT_FILES=$(git diff --name-only main $UPSTREAM | while read f; do
-        git diff --name-only HEAD -- "$f" 2>/dev/null | head -1
-    done | sort -u)
-
     DELETED_BY_UPSTREAM=$(git diff --diff-filter=D --name-only main $UPSTREAM)
-
     if [ -n "$DELETED_BY_UPSTREAM" ]; then
         echo -e "${RED}⚠  Upstream DELETED these files (you may want to keep yours):${NC}"
         echo "$DELETED_BY_UPSTREAM" | while read f; do echo "  - $f"; done
@@ -51,9 +57,8 @@ check)
     fi
 
     echo -e "${YELLOW}To merge: ./upstream-sync.sh merge${NC}"
-    echo -e "  This will attempt a git merge. If there are conflicts,"
-    echo -e "  you'll resolve them manually, then run: ./upstream-sync.sh done"
-    echo -e "  To cancel a merge: ./upstream-sync.sh abort"
+    echo -e "  Your Dockerfile customizations are safe — they live in custom/config.json"
+    echo -e "  and get re-applied automatically after merge."
     ;;
 
 merge)
@@ -79,8 +84,15 @@ merge)
     if git merge $UPSTREAM --no-edit; then
         echo ""
         echo -e "${GREEN}✓ Merge successful! No conflicts.${NC}"
-        echo -e "  Review changes, then push to your fork: ./sync.sh push \"merge upstream updates\""
-        echo -e "  If something looks wrong: git reset --hard HEAD~1"
+
+        # Auto-regenerate .build files with your customizations
+        rebuild_customizations
+
+        echo ""
+        echo -e "${GREEN}✓ All done! Your customizations are preserved.${NC}"
+        echo -e "  Push to your fork:  ./sync.sh push \"merge upstream updates\""
+        echo -e "  Rebuild containers: ./quick-update.sh"
+        echo -e "  If something is wrong: git reset --hard HEAD~1"
     else
         echo ""
         echo -e "${RED}⚠  MERGE CONFLICTS detected.${NC}"
@@ -89,23 +101,30 @@ merge)
         git diff --name-only --diff-filter=U
         echo ""
         echo -e "${YELLOW}What to do:${NC}"
-        echo "  1. Edit each conflicted file (look for <<<<<<< markers)"
-        echo "  2. For files upstream deleted but you want to KEEP:"
-        echo "     git checkout HEAD -- filename"
-        echo "  3. For files you want to take FROM UPSTREAM:"
-        echo "     git checkout $UPSTREAM -- filename"
-        echo "  4. Stage resolved files: git add <file>"
-        echo "  5. Finish: ./upstream-sync.sh done"
+        echo "  For Dockerfiles/n8n-task-runners.json conflicts, just accept UPSTREAM's version:"
+        echo "    git checkout upstream/main -- Dockerfile Dockerfile.runner n8n-task-runners.json"
+        echo "    git add Dockerfile Dockerfile.runner n8n-task-runners.json"
+        echo "  (Your packages are in custom/config.json and get injected by build.py)"
         echo ""
-        echo -e "  To cancel everything: ./upstream-sync.sh abort"
+        echo "  For OTHER files with conflicts, resolve manually."
+        echo ""
+        echo "  Then finish: ./upstream-sync.sh done"
+        echo "  Or cancel:   ./upstream-sync.sh abort"
     fi
     ;;
 
 done)
     if [ -f .git/MERGE_HEAD ]; then
         git commit --no-edit
-        echo -e "${GREEN}✓ Merge complete!${NC}"
-        echo -e "  Push to your fork: ./sync.sh push \"merge upstream updates\""
+        echo -e "${GREEN}✓ Merge committed!${NC}"
+
+        # Regenerate .build files
+        rebuild_customizations
+
+        echo ""
+        echo -e "${GREEN}✓ All done! Your customizations are preserved.${NC}"
+        echo -e "  Push to your fork:  ./sync.sh push \"merge upstream updates\""
+        echo -e "  Rebuild containers: ./quick-update.sh"
     else
         echo -e "${YELLOW}No merge in progress.${NC}"
     fi
@@ -127,5 +146,8 @@ abort)
     echo "  merge  — Start merging upstream changes"
     echo "  done   — Finish merge after resolving conflicts"
     echo "  abort  — Cancel a merge in progress"
+    echo ""
+    echo "  Your Dockerfile packages are in custom/config.json."
+    echo "  They get auto-injected into upstream's Dockerfiles after every merge."
     ;;
 esac

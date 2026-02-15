@@ -28,7 +28,7 @@
 			"env-overrides": {
 				"NODE_ENV": "test",
 				"NODE_FUNCTION_ALLOW_BUILTIN": "crypto,path,fs,url",
-				"NODE_FUNCTION_ALLOW_EXTERNAL": "moment,ajv,ajv-formats,puppeteer-core,puppeteer-extra,puppeteer-extra-plugin-stealth,playwright-core,playwright-extra,sharp",
+				"NODE_FUNCTION_ALLOW_EXTERNAL": "moment,ajv,ajv-formats,puppeteer-core,puppeteer-extra,puppeteer-extra-plugin-stealth,playwright-core,playwright-extra",
 				"N8N_RUNNERS_HEALTH_CHECK_SERVER_HOST": "0.0.0.0",
 				"PUPPETEER_EXECUTABLE_PATH": "/usr/bin/chromium-browser",
 				"PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "true",
@@ -56,7 +56,7 @@
 			"env-overrides": {
 				"PYTHONPATH": "/opt/runners/task-runner-python",
 				"N8N_RUNNERS_STDLIB_ALLOW": "datetime,json,math,os,re,io,base64,hashlib,urllib,subprocess",
-				"N8N_RUNNERS_EXTERNAL_ALLOW": "requests,pillow,PIL,pandas,numpy,pdf2image,PyPDF2"
+				"N8N_RUNNERS_EXTERNAL_ALLOW": "requests,pillow,PIL,pandas,numpy"
 			}
 		}
 	]

@@ -1,0 +1,85 @@
+{
+  "_comment": "YOUR customizations. build.py reads this and injects into upstream Dockerfiles.",
+  "_updated": "2026-02-15",
+
+  "main": {
+    "apk_packages": [
+      "imagemagick",
+      "ca-certificates",
+      "tzdata",
+      "poppler-utils",
+      "poppler-data",
+      "ghostscript",
+      "tesseract-ocr",
+      "tesseract-ocr-data-eng",
+      "font-noto-cjk",
+      "font-dejavu",
+      "font-liberation"
+    ],
+    "lib_strategy": "broad",
+    "share_copies": [
+      "/usr/share/fonts/",
+      "/usr/share/ghostscript/",
+      "/usr/share/tessdata/"
+    ],
+    "bin_copies": [
+      "/usr/bin/magick",
+      "/usr/bin/convert",
+      "/usr/bin/identify",
+      "/usr/bin/mogrify",
+      "/usr/bin/composite",
+      "/usr/bin/pdftoppm",
+      "/usr/bin/pdftotext",
+      "/usr/bin/pdfinfo",
+      "/usr/bin/pdfimages",
+      "/usr/bin/pdfseparate",
+      "/usr/bin/pdfunite",
+      "/usr/bin/gs",
+      "/usr/bin/tesseract"
+    ]
+  },
+
+  "runner": {
+    "apk_packages": [
+      "poppler-utils",
+      "poppler-data",
+      "ghostscript",
+      "tesseract-ocr",
+      "tesseract-ocr-data-eng",
+      "font-noto-cjk",
+      "font-dejavu",
+      "font-liberation"
+    ],
+    "share_copies": [
+      "/usr/share/ghostscript/",
+      "/usr/share/tessdata/"
+    ],
+    "bin_copies": [
+      "/usr/bin/pdftoppm",
+      "/usr/bin/pdftotext",
+      "/usr/bin/pdfinfo",
+      "/usr/bin/pdfimages",
+      "/usr/bin/pdfseparate",
+      "/usr/bin/pdfunite",
+      "/usr/bin/gs",
+      "/usr/bin/tesseract"
+    ],
+    "npm_packages": ["sharp"],
+    "pip_packages": ["pdf2image", "PyPDF2"],
+    "js_allowlist_additions": ["sharp"],
+    "py_allowlist_additions": ["pdf2image", "PyPDF2"]
+  },
+
+  "compose_overrides": {
+    "_comment": "Things to ADD to upstream's docker-compose.yml via override file",
+    "n8n_extra_volumes": ["/backups:/backups:ro"],
+    "worker_extra_volumes": ["/backups:/backups:ro"]
+  },
+
+  "exclude": {
+    "npm": ["pdf-poppler"],
+    "reasons": {
+      "pdf-poppler": "calls process.exit(1) on Linux, kills the runner process. Use native poppler-utils CLI instead."
+    }
+  }
+}

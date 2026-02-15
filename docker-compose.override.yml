@@ -1,0 +1,31 @@
+# YOUR customizations on top of upstream's docker-compose.yml
+# Docker Compose auto-merges this with docker-compose.yml
+# Upstream never touches this file — no merge conflicts.
+
+services:
+  # Use YOUR generated Dockerfiles (with custom packages injected)
+  n8n:
+    build:
+      dockerfile: Dockerfile.build
+    volumes:
+      - /backups:/backups:ro
+
+  n8n-webhook:
+    build:
+      dockerfile: Dockerfile.build
+
+  n8n-worker:
+    build:
+      dockerfile: Dockerfile.build
+    volumes:
+      - /backups:/backups:ro
+
+  # Task runner for main n8n instance
+  n8n-task-runner:
+    build:
+      dockerfile: Dockerfile.runner.build
+
+  # Task runner for workers
+  n8n-worker-runner:
+    build:
+      dockerfile: Dockerfile.runner.build
