@@ -28,7 +28,7 @@
 			"env-overrides": {
 				"NODE_ENV": "test",
 				"NODE_FUNCTION_ALLOW_BUILTIN": "crypto,path,fs,url",
-				"NODE_FUNCTION_ALLOW_EXTERNAL": "moment,ajv,ajv-formats,puppeteer-core,puppeteer-extra,puppeteer-extra-plugin-stealth,playwright-core,playwright-extra,pdf-poppler,sharp",
+				"NODE_FUNCTION_ALLOW_EXTERNAL": "moment,ajv,ajv-formats,puppeteer-core,puppeteer-extra,puppeteer-extra-plugin-stealth,playwright-core,playwright-extra,sharp",
 				"N8N_RUNNERS_HEALTH_CHECK_SERVER_HOST": "0.0.0.0",
 				"PUPPETEER_EXECUTABLE_PATH": "/usr/bin/chromium-browser",
 				"PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "true",
