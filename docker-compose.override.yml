@@ -7,16 +7,25 @@ services:
   n8n:
     build:
       dockerfile: Dockerfile.build
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - /backups:/backups:ro
 
   n8n-webhook:
     build:
       dockerfile: Dockerfile.build
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
 
   n8n-worker:
     build:
       dockerfile: Dockerfile.build
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - /backups:/backups:ro
 
