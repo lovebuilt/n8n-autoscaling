@@ -15,7 +15,7 @@ Simple install, just clone the files + docker compose up
 n8n 2.0 introduced breaking changes for task runners:
 - Task runners are now **separate containers** (external mode)
 - Each worker needs its own task runner sidecar
-- The main n8n instance exposes a task broker on port 5679
+- The main n8n instance does not need a task runner since all executions are offloaded to workers
 - External packages must be configured in the task runner image
 
 This build handles all of this automatically - the autoscaler scales both workers and their task runners together.
@@ -25,7 +25,6 @@ This build handles all of this automatically - the autoscaler scales both worker
 ```mermaid
 graph TD
     A[n8n Main] -->|Queues jobs| B[Redis]
-    A -->|Task Broker :5679| TR1[Task Runner Main]
     B -->|Monitors queue| C[Autoscaler]
     C -->|Scales together| D[n8n Workers]
     C -->|Scales together| TR2[Task Runner Workers]
@@ -41,7 +40,6 @@ graph TD
 | Service | Description |
 |---------|-------------|
 | `n8n` | Main n8n instance (editor, API) |
-| `n8n-task-runner` | Task runner for main instance |
 | `n8n-webhook` | Dedicated webhook processor |
 | `n8n-worker` | Queue workers (autoscaled) |
 | `n8n-worker-runner` | Task runners for workers (autoscaled 1:1 with workers) |
@@ -49,28 +47,56 @@ graph TD
 | `postgres` | Database (with pgvector) |
 | `n8n-autoscaler` | Monitors queue and scales workers + runners |
 | `redis-monitor` | Queue monitoring |
+| `n8n-backup` | Scheduled backups to cloud storage (optional) |
 | `cloudflared` | Cloudflare tunnel |
+
+> **Note:** The main n8n instance does not need its own task runner because all executions (including manual runs) are offloaded to workers via `OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true`. Each worker has its own task runner sidecar.
 
 ## Features
 
 - Dynamic scaling of n8n worker containers based on queue length
 - **n8n 2.0 compatible** - external task runners with proper sidecar scaling
 - Configurable scaling thresholds and limits
-- Redis queue monitoring
-- Docker Compose based deployment
-- Health checks for all services
+- Redis queue monitoring with password authentication
+- Docker Compose based deployment with modular override files
+- Health checks and centralized log rotation for all services
+- **Security hardened** - Redis auth, localhost port binding, PostgreSQL user separation, non-root containers
 - Puppeteer and Playwright with Chromium for web scraping in Code nodes
 - Stealth plugins for bot detection evasion
 - External npm packages (ajv, puppeteer-core, playwright-core, etc.)
+- Scheduled backups with PostgreSQL + Redis + volume data, GPG encryption, multi-cloud upload
+- Interactive setup wizard and systemd service generator
+- Multi-architecture support (amd64, arm64, armhf)
+- Podman rootless support via compose override
 - Example workflows ready to import
 
 ## Prerequisites
 
-- Docker and Docker Compose
+- Docker and Docker Compose (or Podman with podman-compose)
 - If you are a new user, I recommend either Docker Desktop or using the docker convenience script for Ubuntu
 - Set up your Cloudflare domain and subdomains
 
 ## Quick Start
+
+### Option A: Interactive Setup Wizard (Recommended)
+
+```bash
+git clone https://github.com/conor-is-my-name/n8n-autoscaling.git
+cd n8n-autoscaling
+./n8n-setup.sh
+```
+
+The setup wizard will guide you through:
+- Creating `.env` from the template
+- Generating secure random secrets
+- Configuring timezone, URLs, Cloudflare tunnel, Tailscale
+- Setting autoscaling parameters
+- Configuring backups (schedule, encryption, cloud storage, notifications)
+- Detecting your container runtime (Docker/Podman, rootless/rootful)
+- Creating the external network
+- Starting all services with health checks
+
+### Option B: Manual Setup
 
 1. Clone this repository:
    ```bash
@@ -84,7 +110,7 @@ graph TD
    ```
 
 3. Configure your environment variables in `.env`:
-   - Set strong passwords for `POSTGRES_PASSWORD`, `N8N_ENCRYPTION_KEY`, `N8N_RUNNERS_AUTH_TOKEN`
+   - Set strong passwords for `REDIS_PASSWORD`, `POSTGRES_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `N8N_ENCRYPTION_KEY`, `N8N_RUNNERS_AUTH_TOKEN`
    - Update domain settings (`N8N_HOST`, `N8N_WEBHOOK`, etc.)
    - Add your `CLOUDFLARE_TUNNEL_TOKEN`
    - Optionally set `TAILSCALE_IP` for private access
@@ -142,6 +168,73 @@ The autoscaler:
    - Current replicas > `MIN_REPLICAS`
 4. Respects cooldown period between scaling actions
 5. **Scales workers and task runners together** (1:1 ratio)
+
+## Security
+
+### Redis Authentication
+
+Redis requires password authentication. Set `REDIS_PASSWORD` in your `.env` file. The password is automatically propagated to all services that connect to Redis (n8n, autoscaler, monitor, backup).
+
+### Port Binding
+
+By default, all ports bind to `127.0.0.1` (localhost only). This means services are not accessible from external networks unless you:
+- Set `TAILSCALE_IP` to bind to your Tailscale interface
+- Use the Cloudflare tunnel for external access
+
+### PostgreSQL User Separation
+
+The system uses two PostgreSQL users:
+- **Admin user** (`POSTGRES_ADMIN_USER`/`POSTGRES_ADMIN_PASSWORD`): Superuser for database management
+- **Application user** (`POSTGRES_USER`/`POSTGRES_PASSWORD`): Limited-privilege user for n8n
+
+The `init-postgres.sh` script runs on first PostgreSQL initialization to create the application database and user. Set `POSTGRES_APP_PASSWORD` in `.env` to enable this separation.
+
+## Compose Override Files
+
+Modular override files allow you to customize the deployment without editing the main `docker-compose.yml`:
+
+| File | Purpose | Usage |
+|------|---------|-------|
+| `docker-compose.cloudflare.yml` | Binds n8n to localhost only (Cloudflare handles access) | `-f docker-compose.yml -f docker-compose.cloudflare.yml` |
+| `docker-compose.podman.yml` | Adds `:Z,U` flags for rootless Podman SELinux/UID mapping | `-f docker-compose.yml -f docker-compose.podman.yml` |
+
+Example with Cloudflare override:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+```
+
+To enable the Cloudflare override with the setup wizard or systemd generator, set `ENABLE_CLOUDFLARE_OVERRIDE=true` in your `.env`.
+
+## Systemd Integration
+
+Generate a systemd service file for automatic startup:
+
+```bash
+./generate-systemd.sh
+```
+
+The generator will:
+- Detect Docker vs Podman and rootless vs rootful mode
+- Build the correct compose file list with detected overrides
+- Create a system or user-level service file
+- Optionally enable and start the service
+
+## Log Rotation
+
+All services use centralized log rotation configured via `.env`:
+
+```env
+LOG_DRIVER=json-file    # Docker log driver
+LOG_MAX_SIZE=10m        # Max size per log file
+LOG_MAX_FILE=3          # Number of log files to retain
+```
+
+## Performance Tuning
+
+See the "Performance Tuning" section at the bottom of `.env.example` for tuning guidance organized by workload tier:
+- **Light** (2-4GB RAM): Small teams, <100 workflows
+- **Medium** (8-16GB RAM): Teams, 100-500 workflows
+- **Heavy** (32GB+ RAM): Large-scale, 500+ workflows with high concurrency
 
 ## Adding External Packages
 
@@ -203,7 +296,7 @@ To add additional npm packages for JavaScript Code nodes:
 
 3. Rebuild:
    ```bash
-   docker compose build --no-cache n8n-task-runner n8n-worker-runner
+   docker compose build --no-cache n8n-worker-runner
    docker compose up -d
    ```
 
@@ -233,7 +326,7 @@ To add additional pip packages for Python Code nodes:
 
 4. Rebuild:
    ```bash
-   docker compose build --no-cache n8n-task-runner n8n-worker-runner
+   docker compose build --no-cache n8n-worker-runner
    docker compose up -d
    ```
 
@@ -262,7 +355,7 @@ To add command-line tools (like ImageMagick, tesseract, poppler, etc.):
 
 3. Rebuild:
    ```bash
-   docker compose build --no-cache n8n-task-runner n8n-worker-runner
+   docker compose build --no-cache n8n-worker-runner
    docker compose up -d
    ```
 
@@ -321,8 +414,109 @@ docker compose logs -f
 docker compose logs -f n8n-autoscaler
 
 # Task runners
-docker compose logs -f n8n-task-runner n8n-worker-runner
+docker compose logs -f n8n-worker-runner
 ```
+
+## Backup Configuration
+
+The `n8n-backup` service provides scheduled backups of your PostgreSQL database and n8n volume data, with optional encryption and multi-cloud storage upload via [rclone](https://rclone.org/).
+
+### What Gets Backed Up
+
+- **PostgreSQL database** (workflows, credentials, executions, users) via `pg_dump`
+- **Redis data** (job queue state) via `BGSAVE` + compressed RDB dump
+- **n8n volume data** (custom nodes, local file storage) via tar archive
+- Everything bundled into a single timestamped `.tar.gz` archive
+
+### Quick Setup
+
+1. Copy the example rclone config:
+   ```bash
+   cp backup/rclone.conf.example backup/rclone.conf
+   ```
+
+2. Edit `backup/rclone.conf` with your cloud storage credentials (see [rclone docs](https://rclone.org/docs/) for your provider)
+
+3. Uncomment the rclone.conf volume mount in `docker-compose.yml`:
+   ```yaml
+   - ./backup/rclone.conf:/config/rclone/rclone.conf:ro
+   ```
+
+4. Add backup settings to your `.env`:
+   ```env
+   COMPOSE_PROFILES=backup
+   BACKUP_RCLONE_DESTINATIONS=r2:my-bucket/n8n-backups
+   BACKUP_SCHEDULE=0 2 * * *
+   ```
+
+5. Start the backup service:
+   ```bash
+   docker compose up -d
+   ```
+   Or start it explicitly without modifying `.env`:
+   ```bash
+   docker compose --profile backup up -d
+   ```
+
+### Backup Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BACKUP_SCHEDULE` | Cron schedule for backups | `0 2 * * *` (daily 2 AM) |
+| `BACKUP_RETENTION_DAYS` | Days to keep old backups | `30` |
+| `BACKUP_ENCRYPTION_KEY` | GPG passphrase (empty = no encryption) | (empty) |
+| `BACKUP_RCLONE_DESTINATIONS` | Comma-separated rclone remotes | (empty = local only) |
+| `BACKUP_RUN_ON_START` | Run backup immediately on container start | `false` |
+| `BACKUP_DELETE_LOCAL_AFTER_UPLOAD` | Delete local copy after successful remote upload | `false` |
+| `BACKUP_WEBHOOK_URL` | Webhook URL for notifications | (empty) |
+| `SMTP_HOST` | SMTP server for email notifications | (empty) |
+| `SMTP_PORT` | SMTP port | `587` |
+| `SMTP_USER` | SMTP username | (empty) |
+| `SMTP_PASSWORD` | SMTP password | (empty) |
+| `SMTP_TO` | Notification email recipient | (empty) |
+
+### Multiple Cloud Destinations
+
+Upload to multiple providers simultaneously by comma-separating destinations:
+```env
+BACKUP_RCLONE_DESTINATIONS=r2:my-bucket/n8n,s3:backup-bucket/n8n,b2:my-b2-bucket/n8n
+```
+
+### Testing Backups
+
+Run a one-off backup to verify your configuration:
+```env
+BACKUP_RUN_ON_START=true
+```
+```bash
+docker compose --profile backup up n8n-backup
+```
+
+### Restoring from a Backup
+
+1. **Decrypt** (if encrypted):
+   ```bash
+   gpg --decrypt n8n-backup-TIMESTAMP.tar.gz.gpg > n8n-backup-TIMESTAMP.tar.gz
+   ```
+
+2. **Extract** the archive:
+   ```bash
+   tar xzf n8n-backup-TIMESTAMP.tar.gz
+   ```
+
+3. **Restore the database**:
+   ```bash
+   docker compose exec -T postgres pg_restore -U postgres -d n8n --clean --if-exists < database.dump
+   ```
+
+4. **Restore volume data** (stop n8n first):
+   ```bash
+   docker compose stop n8n n8n-worker n8n-webhook
+   tar xzf volumes.tar.gz -C /var/lib/docker/volumes/n8n-autoscaling_n8n_main/_data/
+   docker compose start n8n n8n-worker n8n-webhook
+   ```
+
+**Important:** Your `N8N_ENCRYPTION_KEY` and `N8N_USER_MANAGEMENT_JWT_SECRET` must match the values used when the backup was created, otherwise n8n credentials cannot be decrypted. Keep these values safe separately from your backups.
 
 ## Updating
 
@@ -347,23 +541,18 @@ docker compose logs [service]
 
 ### Verify Redis connection
 ```bash
-docker compose exec redis redis-cli ping
+docker compose exec redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping
 ```
 
 ### Check queue length
 ```bash
-docker compose exec redis redis-cli LLEN bull:jobs:wait
+docker compose exec redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" LLEN bull:jobs:wait
 ```
 
 ### Task runner issues
-If Code nodes fail, check task runner logs:
+If Code nodes fail, check worker task runner logs:
 ```bash
-docker compose logs n8n-task-runner
-```
-
-Verify the task broker is accessible:
-```bash
-docker compose exec n8n-task-runner wget -qO- http://n8n:5679/health || echo "Not reachable"
+docker compose logs n8n-worker-runner
 ```
 
 ### Webhook URL format
@@ -376,18 +565,28 @@ https://webhook.yourdomain.com/webhook/your-webhook-id
 
 ```
 .
-├── docker-compose.yml        # Main compose file
-├── Dockerfile                # Main n8n image (based on n8nio/n8n)
-├── Dockerfile.runner         # Task runner image (based on n8nio/runners)
-├── n8n-task-runners.json     # Task runner launcher config (security settings, allowed packages)
-├── .env.example              # Example environment configuration
-├── .env                      # Your configuration (git-ignored)
-├── examples/                 # Example n8n workflows (Puppeteer/Playwright)
+├── docker-compose.yml              # Main compose file
+├── docker-compose.cloudflare.yml   # Cloudflare tunnel override (localhost binding)
+├── docker-compose.podman.yml       # Podman rootless override (SELinux/UID flags)
+├── Dockerfile                      # Main n8n image (based on n8nio/n8n)
+├── Dockerfile.runner               # Task runner image (based on n8nio/runners)
+├── n8n-task-runners.json           # Task runner launcher config
+├── init-postgres.sh                # PostgreSQL app user initialization
+├── n8n-setup.sh                    # Interactive setup wizard
+├── generate-systemd.sh             # Systemd service generator
+├── .env.example                    # Example environment configuration
+├── .env                            # Your configuration (git-ignored)
+├── .dockerignore                   # Docker build context exclusions
+├── examples/                       # Example n8n workflows
 ├── autoscaler/
-│   ├── Dockerfile            # Autoscaler container
-│   └── autoscaler.py         # Scaling logic
+│   ├── Dockerfile                  # Autoscaler container (Python 3.12, multi-arch)
+│   └── autoscaler.py               # Scaling logic
+├── backup/
+│   ├── Dockerfile                  # Backup container
+│   ├── backup.py                   # Backup logic (pg_dump + Redis + rclone)
+│   └── rclone.conf.example         # Example rclone storage config
 └── monitor/
-    └── monitor.Dockerfile    # Redis monitor container
+    └── monitor.Dockerfile          # Redis monitor container (non-root)
 ```
 
 ## Task Runner Security Configuration

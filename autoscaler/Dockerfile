@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.9-slim as builder
+FROM python:3.12-slim as builder
 
 # Install system dependencies
 RUN apt-get update && \
@@ -15,9 +15,16 @@ RUN apt-get update && \
 # Set the working directory in the container
 WORKDIR /app
 
-# Install Docker Compose v2
+# Install Docker Compose v2 (multi-architecture support)
 RUN mkdir -p ~/.docker/cli-plugins/ && \
-    curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 -o ~/.docker/cli-plugins/docker-compose && \
+    ARCH=$(dpkg --print-architecture) && \
+    case ${ARCH} in \
+        amd64) COMPOSE_ARCH='x86_64' ;; \
+        arm64) COMPOSE_ARCH='aarch64' ;; \
+        armhf) COMPOSE_ARCH='armv7' ;; \
+        *) echo "Unsupported architecture: ${ARCH}" && exit 1 ;; \
+    esac && \
+    curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o ~/.docker/cli-plugins/docker-compose && \
     chmod +x ~/.docker/cli-plugins/docker-compose
 
 # Copy requirements first to leverage Docker cache
@@ -25,7 +32,7 @@ COPY autoscaler/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Final stage
-FROM python:3.9-slim
+FROM python:3.12-slim
 WORKDIR /app
 
 # Install Docker CLI and dependencies in the final stage
@@ -45,7 +52,7 @@ RUN apt-get update && \
 
 # Copy from builder
 COPY --from=builder /root/.docker/cli-plugins/ /usr/local/lib/docker/cli-plugins/
-COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 
 # Ensure docker compose plugin is in PATH
 ENV PATH="/usr/local/lib/docker/cli-plugins:${PATH}"

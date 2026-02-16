@@ -1,0 +1,43 @@
+# Environment and secrets
+.env
+.env.*
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+LICENSE
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Data directories
+Data/
+Logs/
+backups/
+
+# Examples (not needed in build)
+examples/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup config (contains secrets)
+backup/rclone.conf

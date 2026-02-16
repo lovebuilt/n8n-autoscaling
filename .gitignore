@@ -1,23 +1,47 @@
-# Secrets — NEVER commit
+# Environment and secrets
 .env
 .env.*
 !.env.example
 
-# Claude Code local state
+# Claude Code
 .claude/
+
+# Backup credentials
+backup/rclone.conf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+
+# Node.js
+node_modules/
+
+# Data directories (created at runtime)
+Data/
+Logs/
+backups/
 
 # Backup artifacts (prevent accidental commits)
 *.log
 *.dump
 *.tar.gz
-/backups/
 
-# OS artifacts
-.DS_Store
+# IDE files
+.vscode/
+.idea/
 *.swp
 *.swo
 *~
 
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated systemd service files
+*.service
 
 # Generated build files (created by custom/build.py, not edited manually)
 Dockerfile.build
