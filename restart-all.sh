@@ -61,7 +61,7 @@ sleep 30
 
 HEALTHY=0
 UNHEALTHY=0
-for svc in n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner postgres redis n8n-monitor cloudflared; do
+for svc in n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner postgres redis redis-monitor cloudflared; do
     CONTAINER="n8n-autoscaling-${svc}-1"
     STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo "missing")
     HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$CONTAINER" 2>/dev/null || echo "unknown")
