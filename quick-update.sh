@@ -59,6 +59,15 @@ echo "  n8n:    $CURRENT_N8N → $NEW_N8N ($N8N_CHANGED)"
 echo "  Runner: ${CURRENT_RUNNER_DIGEST:-?} → ${NEW_RUNNER_DIGEST:-?} ($RUNNER_CHANGED)"
 echo "========================================"
 
+# API Key Health Check (shared script)
+echo
+echo "Checking API keys..."
+if [ -f /opt/n8n-autoscaling/check-api-keys.sh ]; then
+    /opt/n8n-autoscaling/check-api-keys.sh
+else
+    echo "  WARNING: check-api-keys.sh not found, skipping API key check."
+fi
+
 # Post-update: trigger TypeVersion Health Check
 if [ -f /opt/n8n-autoscaling/post-update-hook.sh ]; then
     /opt/n8n-autoscaling/post-update-hook.sh

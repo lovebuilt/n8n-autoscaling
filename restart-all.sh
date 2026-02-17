@@ -17,7 +17,7 @@ N8N_IMAGE=$(grep "^FROM n8nio" Dockerfile | tail -1 | awk '{print $2}')
 RUNNER_IMAGE=$(grep "^FROM n8nio" Dockerfile.runner | tail -1 | awk '{print $2}')
 
 # Step 1: Get current versions
-echo "[1/6] Checking current versions..."
+echo "[1/7] Checking current versions..."
 CURRENT_N8N=$(docker compose exec -T n8n n8n --version 2>/dev/null || echo "unknown")
 CURRENT_N8N_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-1 2>/dev/null | cut -c8-19)
 CURRENT_RUNNER_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-task-runner-1 2>/dev/null | cut -c8-19)
@@ -26,14 +26,14 @@ echo "  Runner: $RUNNER_IMAGE (${CURRENT_RUNNER_DIGEST:-unknown})"
 
 # Step 2: Pull latest base images
 echo
-echo "[2/6] Pulling latest base images..."
+echo "[2/7] Pulling latest base images..."
 docker pull "$N8N_IMAGE"
 docker pull "$RUNNER_IMAGE"
 echo
 
 # Step 3: Run backup before restart
 echo
-echo "[3/6] Running backup..."
+echo "[3/7] Running backup..."
 if [ -f /opt/n8n-autoscaling/backup.sh ]; then
     /opt/n8n-autoscaling/backup.sh
     echo "  Backup complete."
@@ -43,20 +43,20 @@ fi
 
 # Step 4: Rebuild all n8n services
 echo
-echo "[4/6] Rebuilding containers (n8n + webhook + worker + runners)..."
+echo "[4/7] Rebuilding containers (n8n + webhook + worker + runners)..."
 docker compose build --no-cache n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner
 echo "  Build complete."
 
 # Step 5: Full stack down/up (ALL services including Postgres, Redis, Cloudflare tunnel)
 echo
-echo "[5/6] Full stack restart (all services)..."
+echo "[5/7] Full stack restart (all services)..."
 docker compose down
 docker compose up -d
 echo "  All services started."
 
 # Step 6: Health check
 echo
-echo "[6/6] Health check (waiting 30s for startup)..."
+echo "[6/7] Health check (waiting 30s for startup)..."
 sleep 30
 
 HEALTHY=0
@@ -101,6 +101,15 @@ if [ "$UNHEALTHY" -gt 0 ]; then
     echo "  docker compose ps"
     echo "  docker compose logs <service>"
     exit 1
+fi
+
+# Step 7: API Key Health Check (shared script)
+echo
+echo "[7/7] Checking API key health..."
+if [ -f /opt/n8n-autoscaling/check-api-keys.sh ]; then
+    /opt/n8n-autoscaling/check-api-keys.sh
+else
+    echo "  WARNING: check-api-keys.sh not found, skipping API key check."
 fi
 
 # Post-update: trigger TypeVersion Health Check
