@@ -29,12 +29,8 @@ services:
     volumes:
       - /backups:/backups:ro
 
-  # Task runner for main n8n instance
-  n8n-task-runner:
-    build:
-      dockerfile: Dockerfile.runner.build
-
-  # Task runner for workers
+  # Task runner for workers (main instance doesn't need one —
+  # OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true sends all work to workers)
   n8n-worker-runner:
     build:
       dockerfile: Dockerfile.runner.build
