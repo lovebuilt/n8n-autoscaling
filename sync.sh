@@ -71,8 +71,8 @@ case "${1:-}" in
       echo "Done\! Server matches GitHub."
       echo
       echo "If Dockerfiles changed, rebuild with:"
-      echo "  docker compose build --no-cache n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner"
-      echo "  docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner"
+      echo "  docker compose build --no-cache --pull n8n n8n-webhook n8n-worker n8n-worker-runner"
+      echo "  docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-worker-runner"
     fi
     ;;
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # n8n Infrastructure Health Check — color-coded table with summary
-# Usage: ./health-check.sh (on server) or: ssh root@37.27.189.40 /opt/n8n-autoscaling/health-check.sh
+# Usage: ./health-check.sh (on server) or: ssh root@<YOUR_SERVER_IP> /opt/n8n-autoscaling/health-check.sh
 
 H=0; U=0; N=0
 ROWS=""

@@ -20,7 +20,7 @@ RUNNER_IMAGE=$(grep "^FROM n8nio" Dockerfile.runner | tail -1 | awk '{print $2}'
 echo "[1/7] Checking current versions..."
 CURRENT_N8N=$(docker compose exec -T n8n n8n --version 2>/dev/null || echo "unknown")
 CURRENT_N8N_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-1 2>/dev/null | cut -c8-19)
-CURRENT_RUNNER_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-task-runner-1 2>/dev/null | cut -c8-19)
+CURRENT_RUNNER_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-worker-runner-1 2>/dev/null | cut -c8-19)
 echo "  n8n:    $CURRENT_N8N"
 echo "  Runner: $RUNNER_IMAGE (${CURRENT_RUNNER_DIGEST:-unknown})"
 
@@ -44,13 +44,13 @@ fi
 # Step 4: Rebuild all n8n services
 echo
 echo "[4/7] Rebuilding containers (n8n + webhook + worker + runners)..."
-docker compose build --no-cache n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner
+docker compose build --no-cache --pull n8n n8n-webhook n8n-worker n8n-worker-runner
 echo "  Build complete."
 
 # Step 5: Recreate containers
 echo
 echo "[5/7] Restarting containers..."
-docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner
+docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-worker-runner
 echo "  Containers restarted."
 
 # Step 6: Health check
@@ -60,7 +60,7 @@ sleep 30
 
 HEALTHY=0
 UNHEALTHY=0
-for svc in n8n n8n-webhook n8n-worker n8n-task-runner n8n-worker-runner; do
+for svc in n8n n8n-webhook n8n-worker n8n-worker-runner; do
     CONTAINER="n8n-autoscaling-${svc}-1"
     STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo "missing")
     HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$CONTAINER" 2>/dev/null || echo "unknown")
@@ -76,7 +76,7 @@ done
 # Get new versions
 NEW_N8N=$(docker compose exec -T n8n n8n --version 2>/dev/null || echo "unknown")
 NEW_N8N_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-1 2>/dev/null | cut -c8-19)
-NEW_RUNNER_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-task-runner-1 2>/dev/null | cut -c8-19)
+NEW_RUNNER_DIGEST=$(docker inspect --format="{{.Image}}" n8n-autoscaling-n8n-worker-runner-1 2>/dev/null | cut -c8-19)
 
 # Determine what changed
 N8N_CHANGED="no change"
