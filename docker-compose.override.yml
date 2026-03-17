@@ -12,7 +12,9 @@ services:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - /backups:/backups:ro
-      - ./gemini-config:/root/.gemini
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
 
   n8n-webhook:
     build:
@@ -21,7 +23,9 @@ services:
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
-      - ./gemini-config:/root/.gemini
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
 
   n8n-worker:
     build:
@@ -31,7 +35,9 @@ services:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - /backups:/backups:ro
-      - ./gemini-config:/root/.gemini
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
 
   # Task runner for workers (main instance doesn't need one —
   # OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true sends all work to workers)
