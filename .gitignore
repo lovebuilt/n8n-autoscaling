@@ -48,3 +48,6 @@ Dockerfile.build
 Dockerfile.runner.build
 n8n-task-runners.build.json
 .build-backups/
+
+# Gemini CLI OAuth credentials
+gemini-config/
