@@ -53,3 +53,8 @@ n8n-task-runners.build.json
 
 # AI tool configs (Gemini, Claude, etc.)
 config/
+
+# Belt-and-suspenders: explicit auth file patterns (in case config/ line is removed)
+config/*/auth.json
+config/*/oauth_*
+config/*/.claude.json
