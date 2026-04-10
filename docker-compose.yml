@@ -103,16 +103,6 @@ x-task-runner: &service-task-runner
     - N8N_RUNNERS_INSECURE_MODE=true
 
 services:
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    logging: *default-logging
-    networks:
-      - n8n-network
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-
   redis:
     image: redis:8-alpine
     restart: unless-stopped

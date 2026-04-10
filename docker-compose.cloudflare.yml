@@ -12,10 +12,3 @@ services:
   n8n-webhook:
     ports:
       - "127.0.0.1:5680:5678"
-
-  cloudflared:
-    depends_on:
-      n8n:
-        condition: service_healthy
-      n8n-webhook:
-        condition: service_healthy
