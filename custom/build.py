@@ -127,16 +127,37 @@ def inject_copies(content, share_copies, bin_copies):
     return '\n'.join(result)
 
 
+def _pkg_base_name(pkg):
+    """Strip the version spec from an npm package spec (for --allow-build).
+
+    'sharp@0.34.5' -> 'sharp'; '@scope/name@1.2.3' -> '@scope/name'.
+    """
+    pkg = pkg.strip()
+    if pkg.startswith('@'):
+        scope, _, rest = pkg[1:].partition('/')
+        return f'@{scope}/{rest.split("@")[0]}'
+    return pkg.split('@')[0]
+
+
 def inject_npm(content, packages):
-    """Add custom npm packages to the pnpm add block."""
+    """Add custom npm packages to the pnpm add block.
+
+    Also emits `--allow-build=<pkg>` for each custom package so native
+    postinstall build scripts (e.g. sharp) are permitted. pnpm >= 10.4 makes
+    ERR_PNPM_IGNORED_BUILDS fatal, so a freshly-pulled n8nio/runners base whose
+    pnpm refuses to run un-approved build scripts fails `pnpm add sharp` without
+    this. Verified against pnpm 11.5.2 (Maintenance Run #24, 2026-06-09).
+    """
     if not packages:
         return content
+    allow_flags = ' '.join(f'--allow-build={_pkg_base_name(p)}' for p in packages)
     lines = content.split('\n')
     result = []
     in_pnpm = False
     for line in lines:
         if 'pnpm add' in line:
             in_pnpm = True
+            line = line.replace('pnpm add', f'pnpm add {allow_flags}', 1)
         if in_pnpm and not line.rstrip().endswith('\\'):
             result.append(line.rstrip() + ' \\')
             result.append('    # NOTE: pdf-poppler excluded — calls process.exit(1), kills runner')
@@ -283,6 +304,7 @@ def verify(config):
     else:
         print()
         print("  ✅ ALL VERIFIED — generated files match or exceed your current setup.")
+
 
 
 def inject_npm_globals(content, packages):
