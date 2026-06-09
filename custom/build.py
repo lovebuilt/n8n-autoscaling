@@ -285,6 +285,34 @@ def verify(config):
         print("  ✅ ALL VERIFIED — generated files match or exceed your current setup.")
 
 
+def inject_npm_globals(content, packages):
+    """Add npm install -g + symlink step to main Dockerfile. v2 (2026-04-30).
+
+    Each package entry: {"pkg": "@scope/name", "bin": "binary-name"}
+    Inserted before the first non-comment EXPOSE directive, runs as root.
+    """
+    if not packages:
+        return content
+    lines = content.split('\n')
+    result = []
+    inserted = False
+    for line in lines:
+        if (not inserted) and line.strip().startswith('EXPOSE'):
+            pkg_args = ' '.join(f"{p['pkg']}@latest" for p in packages)
+            result.append('# === YOUR CUSTOM NPM GLOBALS (from custom/config.json) ===')
+            result.append('USER root')
+            result.append(f'RUN npm install -g {pkg_args} && \\')
+            result.append('    NPM_PREFIX=$(npm config get prefix) && \\')
+            for i, p in enumerate(packages):
+                suffix = ' && \\' if i < len(packages) - 1 else ''
+                result.append(f"    ln -sf $NPM_PREFIX/bin/{p['bin']} /usr/local/bin/{p['bin']}{suffix}")
+            result.append('USER node')
+            result.append('')
+            inserted = True
+        result.append(line)
+    return '\n'.join(result)
+
+
 def main():
     config = load_config()
     main_cfg = config['main']
@@ -307,6 +335,7 @@ def main():
     if main_cfg.get('lib_strategy') == 'broad':
         df = set_broad_lib_copy(df)
     df = inject_copies(df, main_cfg['share_copies'], main_cfg['bin_copies'])
+    df = inject_npm_globals(df, main_cfg.get('npm_globals', []))
     (ROOT_DIR / 'Dockerfile.build').write_text(df)
     print("    ✓ Written")
 
