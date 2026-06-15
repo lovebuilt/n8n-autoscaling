@@ -15,6 +15,11 @@ services:
       - ./config/gemini:/root/.gemini
       - ./config/claude:/root/.claude
       - ./config/codex:/root/.codex
+      # CE1 2026-06-10: executeCommand pipeline scripts live on the host. The
+      # June-9 recreate dropped host access and silently broke the draft
+      # generator. lab = scripts+fixtures; .env read-only for LLM keys.
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
 
   n8n-webhook:
     build:
@@ -26,6 +31,8 @@ services:
       - ./config/gemini:/root/.gemini
       - ./config/claude:/root/.claude
       - ./config/codex:/root/.codex
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
 
   n8n-worker:
     build:
@@ -38,6 +45,8 @@ services:
       - ./config/gemini:/root/.gemini
       - ./config/claude:/root/.claude
       - ./config/codex:/root/.codex
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
 
   # Task runner for workers (main instance doesn't need one —
   # OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true sends all work to workers)
