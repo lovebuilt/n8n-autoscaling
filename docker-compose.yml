@@ -10,6 +10,8 @@ networks:
     driver: bridge
   shark:
     external: true
+  ai-env-n8n-link:
+    external: true
 
 x-logging: &default-logging
   driver: ${LOG_DRIVER:-json-file}
@@ -27,6 +29,7 @@ x-n8n: &service-n8n
   networks:
     - n8n-network
     - shark
+    - ai-env-n8n-link
   environment:
     - N8N_DIAGNOSTICS_ENABLED=${N8N_DIAGNOSTICS_ENABLED}
     - N8N_MIGRATE_FS_STORAGE_PATH=true
@@ -91,6 +94,7 @@ x-task-runner: &service-task-runner
   networks:
     - n8n-network
     - shark
+    - ai-env-n8n-link
   environment:
     - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN}
     - N8N_RUNNERS_MAX_CONCURRENCY=${N8N_RUNNERS_MAX_CONCURRENCY}
@@ -149,6 +153,7 @@ services:
     networks:
       - n8n-network
       - shark
+      - ai-env-n8n-link
 
   n8n:
     <<: *service-n8n
@@ -165,6 +170,7 @@ services:
     networks:
       - n8n-network
       - shark
+      - ai-env-n8n-link
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
       interval: 10s
@@ -213,6 +219,7 @@ services:
     networks:
       - n8n-network
       - shark
+      - ai-env-n8n-link
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
       interval: 5s
