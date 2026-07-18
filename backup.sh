@@ -68,8 +68,12 @@ fi
 log "Backing up n8n volumes..."
 for vol in n8n-autoscaling_n8n_main n8n-autoscaling_n8n_webhook; do
     VOL_SHORT=$(echo "$vol" | sed 's/n8n-autoscaling_//')
+    # .n8n/storage is n8n's filesystem binary store — n8n WRITES into it, so tarring it
+    # makes each backup contain the previous one (2x daily growth; filled the disk 2026-07-18).
     if docker run --rm -v "$vol":/source -v "$BACKUP_PATH":/backup alpine \
-        tar czf "/backup/${VOL_SHORT}.tar.gz" -C /source . 2>>"$LOG_FILE"; then
+        tar czf "/backup/${VOL_SHORT}.tar.gz" \
+        --exclude='./*/.n8n/storage' --exclude='./.n8n/storage' \
+        -C /source . 2>>"$LOG_FILE"; then
         VOL_SIZE=$(du -sh "$BACKUP_PATH/${VOL_SHORT}.tar.gz" | cut -f1)
         log "Volume $VOL_SHORT backed up ($VOL_SIZE)"
     else
@@ -96,7 +100,9 @@ TOTAL_SIZE=$(du -sh "$BACKUP_PATH" | cut -f1)
 log "Backup complete: $BACKUP_PATH ($TOTAL_SIZE, $BACKUP_TYPE)"
 
 # 5. Cleanup old backups
-log "Cleaning up old backups..."
+# Only ever runs on a fully-clean run. A failed run can produce a truncated set, and
+# purging by age would then delete the last KNOWN-GOOD backup (happened 2026-07-18:
+# a 4-error run removed the good 2026-07-10 set).
 
 cleanup_old() {
     local dir="$1"
@@ -112,8 +118,13 @@ cleanup_old() {
     fi
 }
 
-cleanup_old "$BACKUP_DIR/daily" 7
-cleanup_old "$BACKUP_DIR/weekly" 4
+if [ "$ERRORS" -eq 0 ]; then
+    log "Cleaning up old backups..."
+    cleanup_old "$BACKUP_DIR/daily" 7
+    cleanup_old "$BACKUP_DIR/weekly" 4
+else
+    log "SKIPPING cleanup: run had $ERRORS error(s) — refusing to purge known-good backups"
+fi
 
 # Disk usage summary
 BACKUP_TOTAL=$(du -sh "$BACKUP_DIR" | cut -f1)
