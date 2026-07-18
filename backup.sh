@@ -93,6 +93,64 @@ if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" n8n-autoscaling-postgres-1 \
         mv -f "$DUMP_TMP" "$DUMP_FINAL"
         CORE_SIZE=$(du -sh "$DUMP_FINAL" | cut -f1)
         log "Core dump complete ($CORE_SIZE) — validated: workflows, credentials, full schema"
+
+        # 1b. Restore manifest (~1KB). Ships to Drive beside the dump so the artifact is
+        # self-describing under recovery pressure: version compatibility, integrity hash,
+        # the exact restore commands, and where the decryption key lives.
+        N8N_VER=$(docker exec n8n-autoscaling-n8n-1 n8n --version 2>/dev/null | tr -d '\r')
+        PG_VER=$(docker exec n8n-autoscaling-postgres-1 postgres --version 2>/dev/null | awk '{print $3}')
+        DUMP_SHA=$(sha256sum "$DUMP_FINAL" | cut -d' ' -f1)
+        WF_COUNT=$(printf '%s' "$TOC" | grep -c 'TABLE public')
+
+        cat > "$BACKUP_PATH/RESTORE.md" <<MANIFEST
+# n8n restore manifest — $DATE
+
+Produced by /opt/n8n-autoscaling/backup.sh on the dev VPS.
+
+| | |
+|---|---|
+| Artifact | n8n-postgres-core.dump ($CORE_SIZE) |
+| SHA-256 | $DUMP_SHA |
+| n8n version | ${N8N_VER:-unknown} |
+| Postgres | ${PG_VER:-unknown} |
+| Tables in dump | $WF_COUNT |
+
+## What is in it
+
+Full schema (DDL, indexes, constraints) for every table, plus ROW DATA for everything
+except binary_data, execution_data, execution_entity, execution_metadata and
+execution_annotations — i.e. all workflows, credentials, settings, users, variables and
+tags, with execution history deliberately dropped. Restores into an EMPTY database.
+
+## Restore
+
+    # 1. verify integrity first
+    sha256sum -c <<<"$DUMP_SHA  n8n-postgres-core.dump"
+
+    # 2. fresh postgres, empty db, then:
+    pg_restore -U postgres -d n8n --no-owner --clean --if-exists n8n-postgres-core.dump
+
+    # 3. set N8N_ENCRYPTION_KEY in the new instance's env BEFORE first boot (see below)
+    # 4. start n8n on version ${N8N_VER:-unknown} or newer; it will run any pending migrations
+
+## Credential decryption — REQUIRED
+
+Credentials in this dump are AES-encrypted with N8N_ENCRYPTION_KEY. Without that exact
+key they restore as named-but-unusable entries and every API-touching workflow stays
+broken. The key is NOT in this backup, deliberately — it is kept apart so that access to
+this Drive folder alone does not expose the credentials.
+
+Key location: 1Password (VPS secret-loading system), mirrored to Mac ~/.env as
+N8N_ENCRYPTION_KEY, and live at /opt/n8n-autoscaling/.env on the dev VPS.
+Retrieve with: eval \$(get-secret N8N_ENCRYPTION_KEY)
+
+## Not included
+
+Docker/compose config (tracked in the /opt/n8n-autoscaling git repo), the n8n volumes
+(community nodes; rebuildable), and execution history. Whole-VPS snapshots cover
+on-server recovery; this artifact is the offsite second copy.
+MANIFEST
+        log "Restore manifest written (sha256 ${DUMP_SHA:0:12}…, n8n ${N8N_VER:-unknown})"
     fi
 else
     log "ERROR: Core PostgreSQL dump failed!"
