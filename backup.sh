@@ -1,9 +1,14 @@
 #!/bin/bash
 # n8n Automated Backup Script
-# Backs up: PostgreSQL (core + full), n8n volumes, config files
-# Core dump (workflows/credentials only) → uploaded to Google Drive by n8n workflow
-# Full dump (everything) → kept locally only for on-server recovery
-# Retention: 7 daily, 4 weekly
+# Backs up: PostgreSQL core dump ONLY (workflows, credentials, settings).
+# The core dump is uploaded offsite to Google Drive by n8n workflow EIl6GTfolBXwJZAd.
+# Retention: 1 daily, 1 weekly. Google Drive is the ONLY backup destination; the local
+# file exists solely because the n8n workflow uploads by reading it off disk (/backups is
+# mounted read-only into n8n, so n8n cannot clean up after itself). Each run replaces it.
+#
+# Deliberately does NOT back up the n8n volumes, the config dir, or a full DB dump:
+# whole-VPS snapshots already cover on-server recovery, and tarring anything n8n writes
+# into (.n8n/storage) is what caused the 2026-07-18 recursive-growth disk-full incident.
 
 set -uo pipefail
 
@@ -52,57 +57,14 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
-# 1b. Full PostgreSQL dump (everything — kept locally only, NOT uploaded)
-log "Dumping PostgreSQL (full)..."
-if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" n8n-autoscaling-postgres-1 \
-    pg_dump -U postgres -d n8n --format=custom --compress=6 \
-    > "$BACKUP_PATH/n8n-postgres-full.dump" 2>>"$LOG_FILE"; then
-    FULL_SIZE=$(du -sh "$BACKUP_PATH/n8n-postgres-full.dump" | cut -f1)
-    log "Full dump complete ($FULL_SIZE) — local retention only"
-else
-    log "ERROR: Full PostgreSQL dump failed!"
-    ERRORS=$((ERRORS + 1))
-fi
-
-# 2. n8n volumes (community packages, configs)
-log "Backing up n8n volumes..."
-for vol in n8n-autoscaling_n8n_main n8n-autoscaling_n8n_webhook; do
-    VOL_SHORT=$(echo "$vol" | sed 's/n8n-autoscaling_//')
-    # .n8n/storage is n8n's filesystem binary store — n8n WRITES into it, so tarring it
-    # makes each backup contain the previous one (2x daily growth; filled the disk 2026-07-18).
-    if docker run --rm -v "$vol":/source -v "$BACKUP_PATH":/backup alpine \
-        tar czf "/backup/${VOL_SHORT}.tar.gz" \
-        --exclude='./*/.n8n/storage' --exclude='./.n8n/storage' \
-        -C /source . 2>>"$LOG_FILE"; then
-        VOL_SIZE=$(du -sh "$BACKUP_PATH/${VOL_SHORT}.tar.gz" | cut -f1)
-        log "Volume $VOL_SHORT backed up ($VOL_SIZE)"
-    else
-        log "ERROR: Volume $VOL_SHORT backup failed!"
-        ERRORS=$((ERRORS + 1))
-    fi
-done
-
-# 3. Config files (docker-compose, Dockerfiles, .env, etc.)
-log "Backing up config files..."
-if tar czf "$BACKUP_PATH/config.tar.gz" \
-    --exclude='*.log' \
-    --exclude='node_modules' \
-    -C "$(dirname "$COMPOSE_DIR")" "$(basename "$COMPOSE_DIR")" 2>>"$LOG_FILE"; then
-    CONFIG_SIZE=$(du -sh "$BACKUP_PATH/config.tar.gz" | cut -f1)
-    log "Config backup complete ($CONFIG_SIZE)"
-else
-    log "ERROR: Config backup failed!"
-    ERRORS=$((ERRORS + 1))
-fi
-
-# 4. Total backup size
+# 2. Total backup size
 TOTAL_SIZE=$(du -sh "$BACKUP_PATH" | cut -f1)
 log "Backup complete: $BACKUP_PATH ($TOTAL_SIZE, $BACKUP_TYPE)"
 
-# 5. Cleanup old backups
-# Only ever runs on a fully-clean run. A failed run can produce a truncated set, and
-# purging by age would then delete the last KNOWN-GOOD backup (happened 2026-07-18:
-# a 4-error run removed the good 2026-07-10 set).
+# 3. Cleanup old backups
+# Only ever runs on a fully-clean run. A failed run can produce a truncated or missing dump,
+# and purging by age would then delete the last KNOWN-GOOD copy before Drive has a
+# replacement (happened 2026-07-18: a 4-error run removed the good 2026-07-10 set).
 
 cleanup_old() {
     local dir="$1"
@@ -120,8 +82,8 @@ cleanup_old() {
 
 if [ "$ERRORS" -eq 0 ]; then
     log "Cleaning up old backups..."
-    cleanup_old "$BACKUP_DIR/daily" 7
-    cleanup_old "$BACKUP_DIR/weekly" 4
+    cleanup_old "$BACKUP_DIR/daily" 1
+    cleanup_old "$BACKUP_DIR/weekly" 1
 else
     log "SKIPPING cleanup: run had $ERRORS error(s) — refusing to purge known-good backups"
 fi
