@@ -41,19 +41,62 @@ BACKUP_PATH="$TARGET_DIR/$DATE"
 mkdir -p "$BACKUP_PATH"
 
 # 1a. Core PostgreSQL dump (workflows, credentials, settings — small, uploaded to Google Drive)
+#
+# --exclude-table-data (NOT --exclude-table): keeps every table's DDL, indexes and constraints
+# and drops only the ROWS. --exclude-table omits the table entirely, and because the migrations
+# table restores fully populated, n8n would boot believing the schema is current and never
+# recreate them — the restored instance could not execute a single workflow. (Found by the
+# 2026-07-18 adversarial review; verified on the artifact: 218 tables, no execution_entity.)
+#
+# Written to a .tmp and only promoted after it validates, so a failed run can never truncate
+# or replace the previous good dump — the shell's > redirect creates the target file before
+# pg_dump runs, so writing in place would leave a 0-byte artifact the workflow would upload.
+DUMP_FINAL="$BACKUP_PATH/n8n-postgres-core.dump"
+DUMP_TMP="$BACKUP_PATH/.n8n-postgres-core.dump.tmp"
+
 log "Dumping PostgreSQL (core)..."
 if docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" n8n-autoscaling-postgres-1 \
     pg_dump -U postgres -d n8n --format=custom --compress=6 \
-    --exclude-table=binary_data \
-    --exclude-table=execution_data \
-    --exclude-table=execution_entity \
-    --exclude-table=execution_metadata \
-    --exclude-table=execution_annotations \
-    > "$BACKUP_PATH/n8n-postgres-core.dump" 2>>"$LOG_FILE"; then
-    CORE_SIZE=$(du -sh "$BACKUP_PATH/n8n-postgres-core.dump" | cut -f1)
-    log "Core dump complete ($CORE_SIZE) — workflows, credentials, settings"
+    --exclude-table-data=binary_data \
+    --exclude-table-data=execution_data \
+    --exclude-table-data=execution_entity \
+    --exclude-table-data=execution_metadata \
+    --exclude-table-data=execution_annotations \
+    > "$DUMP_TMP" 2>>"$LOG_FILE"; then
+
+    # Validate before promoting: the archive must parse, and must actually contain the things
+    # a restore depends on. A dump that parses but is missing credentials is worse than no dump,
+    # because it looks like a backup.
+    docker cp "$DUMP_TMP" n8n-autoscaling-postgres-1:/tmp/verify.dump >/dev/null 2>>"$LOG_FILE"
+    TOC=$(docker exec n8n-autoscaling-postgres-1 pg_restore --list /tmp/verify.dump 2>>"$LOG_FILE")
+    TOC_RC=$?
+    docker exec n8n-autoscaling-postgres-1 rm -f /tmp/verify.dump 2>/dev/null
+
+    DUMP_BYTES=$(stat -c %s "$DUMP_TMP" 2>/dev/null || echo 0)
+    HAS_CREDS=$(printf '%s' "$TOC" | grep -c 'TABLE public credentials_entity')
+    HAS_WF=$(printf '%s' "$TOC" | grep -c 'TABLE public workflow_entity')
+    HAS_EXEC=$(printf '%s' "$TOC" | grep -c 'TABLE public execution_entity')
+
+    if [ "$TOC_RC" -ne 0 ]; then
+        log "ERROR: core dump does not parse (pg_restore --list failed) — keeping previous dump"
+        rm -f "$DUMP_TMP"
+        ERRORS=$((ERRORS + 1))
+    elif [ "$DUMP_BYTES" -lt 102400 ]; then
+        log "ERROR: core dump implausibly small (${DUMP_BYTES} bytes) — keeping previous dump"
+        rm -f "$DUMP_TMP"
+        ERRORS=$((ERRORS + 1))
+    elif [ "$HAS_CREDS" -eq 0 ] || [ "$HAS_WF" -eq 0 ] || [ "$HAS_EXEC" -eq 0 ]; then
+        log "ERROR: core dump missing required schema (creds=$HAS_CREDS wf=$HAS_WF exec=$HAS_EXEC) — keeping previous dump"
+        rm -f "$DUMP_TMP"
+        ERRORS=$((ERRORS + 1))
+    else
+        mv -f "$DUMP_TMP" "$DUMP_FINAL"
+        CORE_SIZE=$(du -sh "$DUMP_FINAL" | cut -f1)
+        log "Core dump complete ($CORE_SIZE) — validated: workflows, credentials, full schema"
+    fi
 else
     log "ERROR: Core PostgreSQL dump failed!"
+    rm -f "$DUMP_TMP"
     ERRORS=$((ERRORS + 1))
 fi
 
