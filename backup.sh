@@ -66,16 +66,24 @@ log "Backup complete: $BACKUP_PATH ($TOTAL_SIZE, $BACKUP_TYPE)"
 # and purging by age would then delete the last KNOWN-GOOD copy before Drive has a
 # replacement (happened 2026-07-18: a 4-error run removed the good 2026-07-10 set).
 
+# Sorts by the YYYY-MM-DD directory NAME, not by mtime. mtime is not a reliable proxy for
+# backup age — overwriting a dump in place leaves the parent dir's mtime untouched, so an
+# mtime sort once selected TODAY'S fresh dump for deletion (observed 2026-07-18).
+# $DATE is additionally protected as a belt-and-suspenders guard.
 cleanup_old() {
     local dir="$1"
     local keep="$2"
     local count
     count=$(find "$dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
     if [ "$count" -gt "$keep" ]; then
-        find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null \
-            | sort -n | head -n -"$keep" | cut -d' ' -f2- | while read -r old; do
-            log "Removing old backup: $old"
-            rm -rf "$old"
+        find "$dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+            | sort | head -n -"$keep" | while read -r old; do
+            if [ "$old" = "$DATE" ]; then
+                log "Refusing to remove today's backup: $dir/$old"
+                continue
+            fi
+            log "Removing old backup: $dir/$old"
+            rm -rf "${dir:?}/${old:?}"
         done
     fi
 }
