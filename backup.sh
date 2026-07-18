@@ -122,7 +122,7 @@ except binary_data, execution_data, execution_entity, execution_metadata and
 execution_annotations — i.e. all workflows, credentials, settings, users, variables and
 tags, with execution history deliberately dropped. Restores into an EMPTY database.
 
-## Restore
+## Restore (dumps dated 2026-07-18 or later — the current format)
 
     # 1. verify integrity first
     sha256sum -c <<<"$DUMP_SHA  n8n-postgres-core.dump"
@@ -132,6 +132,25 @@ tags, with execution history deliberately dropped. Restores into an EMPTY databa
 
     # 3. set N8N_ENCRYPTION_KEY in the new instance's env BEFORE first boot (see below)
     # 4. start n8n on version ${N8N_VER:-unknown} or newer; it will run any pending migrations
+
+## Restore — OLD FORMAT (dumps dated BEFORE 2026-07-18)
+
+Dumps produced before the 2026-07-18 schema fix were taken with \`--exclude-table\` (not
+\`--exclude-table-data\`), so they carry only ~102 tables and NO execution_entity/DDL for the
+excluded tables. A plain \`pg_restore\` of one leaves migrations fully populated, so n8n boots
+believing its schema is current and never recreates the missing tables — the instance cannot
+run a single workflow. Effective one-shot clean-restore depth is therefore 1 day until roughly
+2026-07-25, by which point 7 current-format dailies have accumulated and Drive's 7-day retention
+has aged the old ones out. If you MUST restore a pre-2026-07-18 dump before then:
+
+    # 1. stand up a FRESH n8n on ${N8N_VER:-the matching version} against an EMPTY database and
+    #    let it boot once, so its own migrations create the complete, current schema.
+    # 2. stop n8n. Clear the seeded migrations rows so the data-only load does not collide:
+    #      psql -U postgres -d n8n -c 'DELETE FROM migrations;'
+    # 3. load ONLY the data, deferring constraints:
+    #      pg_restore -U postgres -d n8n --data-only --disable-triggers <old-dump>
+    # 4. set N8N_ENCRYPTION_KEY (see below) and start n8n; it reconciles migrations on boot.
+    # Prefer a current-format dump (2026-07-18+) whenever one exists — this dance is a fallback.
 
 ## Credential decryption — REQUIRED
 
@@ -202,9 +221,20 @@ BACKUP_TOTAL=$(du -sh "$BACKUP_DIR" | cut -f1)
 DISK_FREE=$(df -h / | tail -1 | awk '{print $4}')
 log "Total backup storage: $BACKUP_TOTAL | Disk free: $DISK_FREE"
 
+# Failure sentinel. The n8n upload workflow (EIl6GTfolBXwJZAd) fires ~30 min after this cron and
+# its guards already catch a MISSING or STALE dump — but they cannot tell "cron ran and failed"
+# apart from "cron never ran", and they surface no reason. This one-line sentinel closes that gap:
+# written on any non-zero exit (with the error count + a pointer to the log), removed on success.
+# The workflow's Parse File List reads it and, if present, throws with its contents so the Gmail
+# alert names the actual failure the same morning — no MTA, no new webhook, no new secret.
+# $BACKUP_DIR is mounted read-only into n8n, so the container can read but never clear it.
+SENTINEL="$BACKUP_DIR/.backup-failed"
 if [ "$ERRORS" -gt 0 ]; then
-    log "=== Backup $DATE finished with $ERRORS error(s) ==="
+    LAST_ERR=$(grep 'ERROR' "$LOG_FILE" 2>/dev/null | tail -1 | sed 's/^\[[^]]*\] //')
+    echo "$DATE exit=1 errors=$ERRORS last=\"${LAST_ERR:-unknown}\" see=$LOG_FILE" > "$SENTINEL"
+    log "=== Backup $DATE finished with $ERRORS error(s) — sentinel written ==="
     exit 1
 else
+    rm -f "$SENTINEL"
     log "=== Backup $DATE finished successfully ==="
 fi
