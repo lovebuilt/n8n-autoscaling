@@ -1,6 +1,6 @@
 {
     "_comment": "YOUR customizations. build.py reads this and injects into upstream Dockerfiles.",
-    "_updated": "2026-04-30",
+    "_updated": "2026-07-20",
     "main": {
         "apk_packages": [
             "imagemagick",
@@ -13,7 +13,11 @@
             "tesseract-ocr-data-eng",
             "font-noto-cjk",
             "font-dejavu",
-            "font-liberation"
+            "font-liberation",
+            "python3",
+            "py3-pip",
+            "yt-dlp",
+            "openssl"
         ],
         "lib_strategy": "broad",
         "share_copies": [
@@ -34,22 +38,13 @@
             "/usr/bin/pdfseparate",
             "/usr/bin/pdfunite",
             "/usr/bin/gs",
-            "/usr/bin/tesseract"
+            "/usr/bin/tesseract",
+            "/usr/bin/python3",
+            "/usr/bin/pip3",
+            "/usr/bin/yt-dlp",
+            "/usr/bin/openssl"
         ],
-        "npm_globals": [
-            {
-                "pkg": "@anthropic-ai/claude-code",
-                "bin": "claude"
-            },
-            {
-                "pkg": "@google/gemini-cli",
-                "bin": "gemini"
-            },
-            {
-                "pkg": "@openai/codex",
-                "bin": "codex"
-            }
-        ]
+        "_npm_globals_removed": "E3 2026-06-27: in-container AI CLIs removed (ai-env bridge owns AI calls); list dropped 2026-07-20 to stop build.py re-adding them"
     },
     "runner": {
         "apk_packages": [
