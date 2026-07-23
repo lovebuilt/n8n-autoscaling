@@ -155,7 +155,7 @@ def inject_npm(content, packages):
     result = []
     in_pnpm = False
     for line in lines:
-        if 'pnpm add' in line:
+        if 'pnpm add' in line and not line.lstrip().startswith('#'):
             in_pnpm = True
             line = line.replace('pnpm add', f'pnpm add {allow_flags}', 1)
         if in_pnpm and not line.rstrip().endswith('\\'):
