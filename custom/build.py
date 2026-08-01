@@ -307,6 +307,40 @@ def verify(config):
 
 
 
+def inject_pip_globals(content, packages, pre=False):
+    """Add a system-pip install RUN to the FINAL stage of the MAIN Dockerfile.
+
+    v1 (2026-07-24, HO-TRANSCRIBE-PROCESSOR): the main image gets yt-dlp from apk
+    (stale — self-warns outdated at 2026.03.17). This installs the yt-dlp NIGHTLY
+    channel (`--pre yt-dlp[default]`, which also pulls curl_cffi for impersonation
+    targets) — nightly is required for maximum provider coverage: the latest
+    STABLE (2026.07.04) has Vimeo extractor rot, fixed only in nightly. Wheels are
+    prebuilt (musllinux_1_2_x86_64), so no build toolchain is needed. Inserted
+    before the first EXPOSE, bracketed USER root/USER node (mirrors
+    inject_npm_globals). pip's script dir is /usr/bin, so the yt-dlp console
+    script overwrites the apk-provided one in place — no PATH ambiguity. The
+    baked version is a baseline; custom/ytdlp-refresh.sh (host cron) keeps it
+    fresh between rebuilds under a YouTube-parity guard."""
+    if not packages:
+        return content
+    pkg_args = ' '.join(packages)
+    pre_flag = '--pre ' if pre else ''
+    lines = content.split('\n')
+    result = []
+    inserted = False
+    for line in lines:
+        if (not inserted) and line.strip().startswith('EXPOSE'):
+            result.append('# === YOUR CUSTOM PYTHON GLOBALS (from custom/config.json) ===')
+            result.append('USER root')
+            result.append('RUN pip3 install --break-system-packages --no-cache-dir '
+                          f'{pre_flag}--upgrade {pkg_args}')
+            result.append('USER node')
+            result.append('')
+            inserted = True
+        result.append(line)
+    return '\n'.join(result)
+
+
 def inject_npm_globals(content, packages):
     """Add npm install -g + symlink step to main Dockerfile. v2 (2026-04-30).
 
@@ -358,6 +392,7 @@ def main():
         df = set_broad_lib_copy(df)
     df = inject_copies(df, main_cfg['share_copies'], main_cfg['bin_copies'])
     df = inject_npm_globals(df, main_cfg.get('npm_globals', []))
+    df = inject_pip_globals(df, main_cfg.get('pip_globals_pre', []), pre=True)
     (ROOT_DIR / 'Dockerfile.build').write_text(df)
     print("    ✓ Written")
 

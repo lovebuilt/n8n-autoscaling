@@ -44,7 +44,12 @@
             "/usr/bin/yt-dlp",
             "/usr/bin/openssl"
         ],
-        "_npm_globals_removed": "E3 2026-06-27: in-container AI CLIs removed (ai-env bridge owns AI calls); list dropped 2026-07-20 to stop build.py re-adding them"
+        "_npm_globals_removed": "E3 2026-06-27: in-container AI CLIs removed (ai-env bridge owns AI calls); list dropped 2026-07-20 to stop build.py re-adding them",
+        "pip_globals_pre": [
+            "yt-dlp[default]",
+            "curl_cffi"
+        ],
+        "_pip_globals_comment": "HO-TRANSCRIBE-PROCESSOR 2026-07-24: system pip in the FINAL stage installs the yt-dlp NIGHTLY channel (--pre yt-dlp[default], pulls curl_cffi for impersonation) over the stale apk yt-dlp (2026.03.17). Nightly is required for max provider coverage — the latest STABLE (2026.07.04) has Vimeo extractor rot (OAuth 401); nightly 2026.07.23+ fixes it and keeps YouTube byte-identical (proven). Prebuilt musllinux_1_2_x86_64 wheels, no build toolchain. yt-dlp script -> /usr/bin/yt-dlp, overwriting the apk one. Kept fresh between rebuilds by custom/ytdlp-refresh.sh (host cron, parity-guarded)."
     },
     "runner": {
         "apk_packages": [
