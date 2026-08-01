@@ -206,9 +206,20 @@ services:
     <<: *service-n8n
     stop_grace_period: 5m
     command: worker
+    # HO-N8N-ENVGAP 2026-08-01: these MUST live here, not in the override.
+    # The autoscaler creates workers with an explicit `-f docker-compose.yml`, which
+    # does NOT auto-merge the override -- so anything defined only in the override is
+    # silently absent from every autoscaler-created worker. Paths are ABSOLUTE because
+    # the autoscaler passes --project-directory /app.
+    env_file: .env
     volumes:
       - n8n_main:/n8n
       - /backups:/backups:ro
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+      - /opt/n8n-autoscaling/config/gemini:/root/.gemini
+      - /opt/n8n-autoscaling/config/claude:/root/.claude
+      - /opt/n8n-autoscaling/config/codex:/root/.codex
     depends_on:
       n8n:
         condition: service_healthy
@@ -353,6 +364,10 @@ services:
     volumes:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - ./.env:/app/.env
+      # HO-N8N-ENVGAP 2026-08-01: the image bakes a Jun-27 copy of this file at
+      # /app/docker-compose.yml. Mount the live one over it so workers can never be
+      # spawned from a stale definition again.
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
     depends_on:
       redis:
         condition: service_healthy

@@ -38,8 +38,10 @@ services:
     build:
       dockerfile: Dockerfile.build
     env_file: .env
-    environment:
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    # HO-N8N-ENVGAP 2026-08-01: N8N_BLOCK_ENV_ACCESS_IN_NODE=false REMOVED here.
+    # Workers keep $env BLOCKED (Hybrid posture, admin/DECISIONS.md D12). Leaving it
+    # would make host-created workers behave differently from autoscaler-created ones
+    # -- the exact nondeterminism this change exists to remove.
     volumes:
       - /backups:/backups:ro
       - ./config/gemini:/root/.gemini
