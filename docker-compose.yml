@@ -348,7 +348,9 @@ services:
       - N8N_WORKER_SERVICE_NAME=${N8N_WORKER_SERVICE_NAME} # Service name in this docker-compose file
       - N8N_WORKER_RUNNER_SERVICE_NAME=${N8N_WORKER_RUNNER_SERVICE_NAME} # Task runner sidecar (n8n 2.0)
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME} # Crucial: Should match your project name
-      - COMPOSE_FILE_PATH=/app/docker-compose.yml # Path to compose file in mounted project
+      - COMPOSE_FILE_PATH=/app/docker-compose.yml # Backward-compatible single-file fallback
+      - COMPOSE_FILE_PATHS=${COMPOSE_FILE_PATHS:-} # Optional ordered list; exact launch files are auto-detected by default
+      - COMPOSE_PROJECT_DIRECTORY=${AUTOSCALER_PROJECT_DIRECTORY:-}
       - MIN_REPLICAS=${MIN_REPLICAS}
       - MAX_REPLICAS=${MAX_REPLICAS} # Adjust as needed
       - SCALE_UP_QUEUE_THRESHOLD=${SCALE_UP_QUEUE_THRESHOLD} # Scale up if queue length > 5
@@ -364,9 +366,17 @@ services:
     volumes:
       - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
       - ./.env:/app/.env
-      # HO-N8N-ENVGAP 2026-08-01: the image bakes a Jun-27 copy of this file at
-      # /app/docker-compose.yml. Mount the live one over it so workers can never be
-      # spawned from a stale definition again.
+      # Upstream 2.1.2 (issue #28) resolves compose files from THIS container's own
+      # com.docker.compose.project.config_files label -- i.e. absolute HOST paths -- so
+      # the project must exist at that same path inside the container. This is the
+      # primary path.
+      - type: bind
+        source: ${AUTOSCALER_PROJECT_DIRECTORY:-${PWD}}
+        target: ${AUTOSCALER_PROJECT_DIRECTORY:-${PWD}}
+        read_only: true
+      # HO-N8N-ENVGAP 2026-08-01, kept at the 2.1.2 merge: the image bakes a Jun-27 copy
+      # of this file at /app/docker-compose.yml. Mounting the live one over it keeps the
+      # LEGACY single-file fallback safe if label detection ever fails.
       - ./docker-compose.yml:/app/docker-compose.yml:ro
     depends_on:
       redis:

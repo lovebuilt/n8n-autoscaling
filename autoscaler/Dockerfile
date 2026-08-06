@@ -59,6 +59,7 @@ ENV PATH="/usr/local/lib/docker/cli-plugins:${PATH}"
 
 # Copy application files
 COPY autoscaler/autoscaler.py .
+COPY autoscaler/compose_config.py .
 COPY docker-compose.yml .
 COPY Dockerfile .
 

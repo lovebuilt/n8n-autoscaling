@@ -5,6 +5,7 @@ import docker
 import subprocess
 import logging
 from dotenv import load_dotenv
+from compose_config import build_compose_command, resolve_compose_context
 
 load_dotenv()
 
@@ -23,6 +24,8 @@ N8N_WORKER_SERVICE_NAME = os.getenv('N8N_WORKER_SERVICE_NAME')
 N8N_WORKER_RUNNER_SERVICE_NAME = os.getenv('N8N_WORKER_RUNNER_SERVICE_NAME', 'n8n-worker-runner')  # n8n 2.0 task runner sidecar
 COMPOSE_PROJECT_NAME = os.getenv('COMPOSE_PROJECT_NAME') # e.g., "n8n-workers"
 COMPOSE_FILE_PATH = os.getenv('COMPOSE_FILE_PATH') # Path inside this container
+COMPOSE_FILE_PATHS = os.getenv('COMPOSE_FILE_PATHS') # Ordered list; uses COMPOSE_PATH_SEPARATOR/os.pathsep
+COMPOSE_PROJECT_DIRECTORY = os.getenv('COMPOSE_PROJECT_DIRECTORY')
 
 MIN_REPLICAS = int(os.getenv('MIN_REPLICAS'))
 MAX_REPLICAS = int(os.getenv('MAX_REPLICAS'))
@@ -105,24 +108,24 @@ def get_current_replicas(docker_client, service_name, project_name):
         return MAX_REPLICAS + 1 # Return a safe value to prevent scaling on error
 
 
-def scale_service(service_name, replicas, compose_file, project_name):
+def scale_service(service_name, replicas, compose_files, project_name, project_directory):
     """Scales a Docker Compose service using docker-compose CLI."""
     if not project_name:
         logging.error("COMPOSE_PROJECT_NAME is not set. Cannot execute docker-compose scale.")
         return False
 
-    command = [
-        "docker",
-        "compose",
-        "-f", compose_file,
-        "--project-name", project_name,
-        "--project-directory", "/app",
-        "up",
-        "-d",
-        "--no-deps",
-        "--scale", f"{service_name}={replicas}",
-        service_name
-    ]
+    command = build_compose_command(
+        compose_files,
+        project_name,
+        project_directory,
+        [
+            "up",
+            "-d",
+            "--no-deps",
+            "--scale", f"{service_name}={replicas}",
+            service_name,
+        ],
+    )
     logging.info(f"Executing scaling command: {' '.join(command)}")
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=SUBPROCESS_TIMEOUT_SECONDS)
@@ -145,7 +148,7 @@ def scale_service(service_name, replicas, compose_file, project_name):
         return False
 
 
-def scale_worker_with_runner(replicas, compose_file, project_name):
+def scale_worker_with_runner(replicas, compose_files, project_name, project_directory):
     """Scales both the n8n worker and its task runner sidecar together (n8n 2.0 requirement)."""
     logging.info(f"Scaling worker and task runner to {replicas} replicas each...")
 
@@ -154,20 +157,20 @@ def scale_worker_with_runner(replicas, compose_file, project_name):
         logging.error("COMPOSE_PROJECT_NAME is not set. Cannot execute docker-compose scale.")
         return False
 
-    command = [
-        "docker",
-        "compose",
-        "-f", compose_file,
-        "--project-name", project_name,
-        "--project-directory", "/app",
-        "up",
-        "-d",
-        "--no-deps",
-        "--scale", f"{N8N_WORKER_SERVICE_NAME}={replicas}",
-        "--scale", f"{N8N_WORKER_RUNNER_SERVICE_NAME}={replicas}",
-        N8N_WORKER_SERVICE_NAME,
-        N8N_WORKER_RUNNER_SERVICE_NAME
-    ]
+    command = build_compose_command(
+        compose_files,
+        project_name,
+        project_directory,
+        [
+            "up",
+            "-d",
+            "--no-deps",
+            "--scale", f"{N8N_WORKER_SERVICE_NAME}={replicas}",
+            "--scale", f"{N8N_WORKER_RUNNER_SERVICE_NAME}={replicas}",
+            N8N_WORKER_SERVICE_NAME,
+            N8N_WORKER_RUNNER_SERVICE_NAME,
+        ],
+    )
     logging.info(f"Executing scaling command: {' '.join(command)}")
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=SUBPROCESS_TIMEOUT_SECONDS)
@@ -213,6 +216,24 @@ def main():
         logging.error(f"CRITICAL: Failed to connect to Redis or Docker: {e}")
         return
 
+    try:
+        compose_files, compose_project_directory, compose_config_source = resolve_compose_context(
+            docker_cl,
+            explicit_file_paths=COMPOSE_FILE_PATHS,
+            legacy_file_path=COMPOSE_FILE_PATH,
+            explicit_project_directory=COMPOSE_PROJECT_DIRECTORY,
+            project_name=COMPOSE_PROJECT_NAME,
+        )
+        logging.info(
+            "Compose configuration (%s): %s",
+            compose_config_source,
+            ", ".join(compose_files),
+        )
+        logging.info("Compose project directory: %s", compose_project_directory)
+    except (FileNotFoundError, RuntimeError, ValueError) as e:
+        logging.error("CRITICAL: Invalid Compose configuration: %s", e)
+        return
+
     logging.info(f"Autoscaler started. Monitoring n8n worker service '{N8N_WORKER_SERVICE_NAME}' in project '{COMPOSE_PROJECT_NAME}'.")
     logging.info(f"  Min Replicas: {MIN_REPLICAS}, Max Replicas: {MAX_REPLICAS}")
     logging.info(f"  Scale Up Queue Threshold: >{SCALE_UP_QUEUE_THRESHOLD}")
@@ -243,13 +264,23 @@ def main():
             if queue_len > SCALE_UP_QUEUE_THRESHOLD and current_reps < MAX_REPLICAS:
                 new_replicas = min(current_reps + 1, MAX_REPLICAS) # Scale one by one for now
                 logging.info(f"Condition met for SCALE UP. Queue: {queue_len} > {SCALE_UP_QUEUE_THRESHOLD}. Replicas: {current_reps} < {MAX_REPLICAS}.")
-                if scale_worker_with_runner(new_replicas, COMPOSE_FILE_PATH, COMPOSE_PROJECT_NAME):
+                if scale_worker_with_runner(
+                    new_replicas,
+                    compose_files,
+                    COMPOSE_PROJECT_NAME,
+                    compose_project_directory,
+                ):
                     last_scale_time = current_time
                     scaled = True
             elif queue_len < SCALE_DOWN_QUEUE_THRESHOLD and current_reps > MIN_REPLICAS:
                 new_replicas = max(current_reps - 1, MIN_REPLICAS) # Scale one by one
                 logging.info(f"Condition met for SCALE DOWN. Queue: {queue_len} < {SCALE_DOWN_QUEUE_THRESHOLD}. Replicas: {current_reps} > {MIN_REPLICAS}.")
-                if scale_worker_with_runner(new_replicas, COMPOSE_FILE_PATH, COMPOSE_PROJECT_NAME):
+                if scale_worker_with_runner(
+                    new_replicas,
+                    compose_files,
+                    COMPOSE_PROJECT_NAME,
+                    compose_project_directory,
+                ):
                     last_scale_time = current_time
                     scaled = True
             

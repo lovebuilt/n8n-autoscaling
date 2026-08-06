@@ -101,6 +101,7 @@ $([ "$RUNTIME" = "docker" ] && echo "Requires=docker.service" || echo "# Podman 
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${working_dir}
+Environment="AUTOSCALER_PROJECT_DIRECTORY=${working_dir}"
 $([ "$ROOTLESS" = true ] && echo "Environment=XDG_RUNTIME_DIR=/run/user/$(id -u)" || true)
 ExecStartPre=${COMPOSE_CMD} ${COMPOSE_FILES} pull --ignore-pull-failures
 ExecStart=${exec_start}

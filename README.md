@@ -168,6 +168,8 @@ The autoscaler:
    - Current replicas > `MIN_REPLICAS`
 4. Respects cooldown period between scaling actions
 5. **Scales workers and task runners together** (1:1 ratio)
+6. Reuses the same ordered Compose files that launched the stack, so override
+   configuration is preserved when workers are created or recreated
 
 ## Security
 
@@ -202,6 +204,27 @@ Example with Cloudflare override:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
 ```
+
+The autoscaler reads Docker Compose's configuration labels from its own
+container and passes the same ordered file set to every scale command. This
+also covers the conventional `docker-compose.override.yml` file loaded by a
+plain `docker compose up -d` command.
+
+Run Compose from this repository directory. The project is mounted read-only
+into the autoscaler at the same absolute host path so relative `env_file` and
+bind-mount paths continue to resolve correctly. For systemd,
+`generate-systemd.sh` records this path automatically. For another launcher or
+when invoking Compose from a different directory, set:
+
+```env
+AUTOSCALER_PROJECT_DIRECTORY=/absolute/path/to/n8n-autoscaling
+```
+
+For advanced deployments, `COMPOSE_FILE_PATHS` can explicitly override label
+discovery. It is an ordered list separated by `:` on Linux/macOS; set
+`COMPOSE_PATH_SEPARATOR` to use another separator. Every configured file must
+be readable inside the autoscaler container. `COMPOSE_FILE_PATH` remains
+available as a backward-compatible single-file fallback.
 
 To enable the Cloudflare override with the setup wizard or systemd generator, set `ENABLE_CLOUDFLARE_OVERRIDE=true` in your `.env`.
 
