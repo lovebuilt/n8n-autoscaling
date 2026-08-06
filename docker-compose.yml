@@ -206,20 +206,16 @@ services:
     <<: *service-n8n
     stop_grace_period: 5m
     command: worker
-    # HO-N8N-ENVGAP 2026-08-01: these MUST live here, not in the override.
-    # The autoscaler creates workers with an explicit `-f docker-compose.yml`, which
-    # does NOT auto-merge the override -- so anything defined only in the override is
-    # silently absent from every autoscaler-created worker. Paths are ABSOLUTE because
-    # the autoscaler passes --project-directory /app.
-    env_file: .env
+    # 2026-08-06: worker customizations (env_file + host mounts) live in
+    # docker-compose.override.yml again -- this block is back to upstream parity.
+    # Upstream 2.1.2 (from our issue #28) makes the autoscaler pass EVERY compose file
+    # to its scale commands, so override content now reaches autoscaler-created workers.
+    # VERIFIED LIVE 2026-08-06: a scaled worker's com.docker.compose.project.config_files
+    # label lists BOTH files, and all six host mounts were present on it.
+    # Do NOT re-add N8N_BLOCK_ENV_ACCESS_IN_NODE here -- workers keep $env BLOCKED
+    # by design (admin/DECISIONS.md D12); making $env work is not the goal.
     volumes:
       - n8n_main:/n8n
-      - /backups:/backups:ro
-      - /home/dev/lab:/home/dev/lab
-      - /home/dev/.env:/home/dev/.env:ro
-      - /opt/n8n-autoscaling/config/gemini:/root/.gemini
-      - /opt/n8n-autoscaling/config/claude:/root/.claude
-      - /opt/n8n-autoscaling/config/codex:/root/.codex
     depends_on:
       n8n:
         condition: service_healthy
