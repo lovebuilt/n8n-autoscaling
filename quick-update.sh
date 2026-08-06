@@ -29,11 +29,15 @@ docker pull "$N8N_IMAGE" && docker pull "$RUNNER_IMAGE"
 
 echo
 echo "Rebuilding..."
-docker compose build --no-cache --pull n8n n8n-webhook n8n-worker n8n-worker-runner
+# Regenerate .build files from upstream + custom/config.json before building.
+# build.py verifies its output and exits 1 if anything regressed -- fail loudly.
+python3 custom/build.py
+
+docker compose build --no-cache --pull n8n n8n-webhook n8n-worker n8n-worker-runner n8n-autoscaler
 
 echo
 echo "Restarting..."
-docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-worker-runner
+docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-worker-runner n8n-autoscaler
 
 echo
 echo "Waiting 10s..."

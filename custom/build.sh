@@ -4,7 +4,8 @@
 # from upstream Dockerfiles + your custom/config.json additions.
 #
 # Usage: ./custom/build.sh
-# Called automatically by: upstream-sync.sh, update.sh, quick-update.sh
+# Called automatically by: upstream-sync.sh (done), update.sh, quick-update.sh
+# (wired into update.sh + quick-update.sh 2026-08-06 -- the claim above was false until then)
 
 set -e
 cd "$(dirname "$0")/.."

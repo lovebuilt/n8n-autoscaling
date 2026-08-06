@@ -62,6 +62,17 @@ check)
     ;;
 
 merge)
+    # DRY-RUN FIRST. This subcommand deliberately NEVER commits.
+    #
+    # Why (2026-07-10 incident + 2026-08-06 confirmation): an upstream-update email said
+    # "SAFE TO MERGE"; `check` then warned the merge would delete 1,535 lines including the
+    # whole customization layer. BOTH were wrong, in opposite directions. The email's AI only
+    # sees the new upstream commits, and `check`'s deletion list is `git diff main upstream`
+    # -- a TREE comparison, not a merge preview, so files the fork ADDED show up as
+    # "deleted by upstream" even though a real 3-way merge never touches them.
+    #
+    # The only truth is a staged dry-run merge. This leaves it staged for inspection and
+    # hands you `done` / `abort`. It will not commit on your behalf.
     echo -e "${CYAN}Fetching upstream...${NC}"
     git fetch upstream
 
@@ -71,46 +82,70 @@ merge)
         exit 0
     fi
 
-    # Safety: check for uncommitted changes
-    if [ -n "$(git status --porcelain)" ]; then
-        echo -e "${RED}✗ You have uncommitted changes. Commit or stash them first.${NC}"
+    # Safety: shared production repo -- refuse on a dirty tree.
+    if [ -n "$(git status --porcelain | grep -v '^?? ')" ]; then
+        echo -e "${RED}✗ You have uncommitted tracked changes. Commit or stash them first.${NC}"
         git status --short
         exit 1
     fi
 
-    echo -e "${YELLOW}Merging $BEHIND upstream commit(s)...${NC}"
+    ROLLBACK_TAG="pre-merge-$(date -u +%Y%m%dT%H%M%SZ)"
+    git tag -f "$ROLLBACK_TAG" >/dev/null 2>&1
+    echo -e "${CYAN}Rollback tag: ${NC}$ROLLBACK_TAG"
+    echo -e "${YELLOW}Dry-run merging $BEHIND upstream commit(s) (--no-commit --no-ff)...${NC}"
     echo ""
 
-    if git merge $UPSTREAM --no-edit; then
-        echo ""
-        echo -e "${GREEN}✓ Merge successful! No conflicts.${NC}"
+    set +e
+    git merge $UPSTREAM --no-commit --no-ff >/tmp/upstream-merge.out 2>&1
+    set -e
+    cat /tmp/upstream-merge.out
 
-        # Auto-regenerate .build files with your customizations
-        rebuild_customizations
+    # ---- GATE 1: real deletions (the load-bearing check) ----
+    DELETIONS=$(git diff --cached --diff-filter=D --name-only)
+    PROTECTED=$(echo "$DELETIONS" | grep -E '^(custom/|docker-compose\.override\.yml|.*\.sh$)' || true)
 
-        echo ""
-        echo -e "${GREEN}✓ All done! Your customizations are preserved.${NC}"
-        echo -e "  Push to your fork:  ./sync.sh push \"merge upstream updates\""
-        echo -e "  Rebuild containers: ./quick-update.sh"
-        echo -e "  If something is wrong: git reset --hard HEAD~1"
-    else
-        echo ""
-        echo -e "${RED}⚠  MERGE CONFLICTS detected.${NC}"
-        echo ""
-        echo -e "Files with conflicts:"
-        git diff --name-only --diff-filter=U
-        echo ""
-        echo -e "${YELLOW}What to do:${NC}"
-        echo "  For Dockerfiles/n8n-task-runners.json conflicts, just accept UPSTREAM's version:"
-        echo "    git checkout upstream/main -- Dockerfile Dockerfile.runner n8n-task-runners.json"
-        echo "    git add Dockerfile Dockerfile.runner n8n-task-runners.json"
-        echo "  (Your packages are in custom/config.json and get injected by build.py)"
-        echo ""
-        echo "  For OTHER files with conflicts, resolve manually."
-        echo ""
-        echo "  Then finish: ./upstream-sync.sh done"
-        echo "  Or cancel:   ./upstream-sync.sh abort"
+    echo ""
+    if [ -n "$PROTECTED" ]; then
+        echo -e "${RED}⛔ ABORTING: the merge would delete CUSTOMIZATION files:${NC}"
+        echo "$PROTECTED" | sed 's/^/    /'
+        git merge --abort
+        echo -e "${GREEN}✓ Merge aborted. Working tree restored. Nothing was committed.${NC}"
+        exit 1
     fi
+
+    if [ -n "$DELETIONS" ]; then
+        echo -e "${YELLOW}⚠  Merge deletes these files (none are customization files -- review anyway):${NC}"
+        echo "$DELETIONS" | sed 's/^/    /'
+    else
+        echo -e "${GREEN}✓ Deletion gate: no files deleted.${NC}"
+    fi
+
+    # ---- GATE 2: conflicts ----
+    CONFLICTS=$(git diff --name-only --diff-filter=U)
+    echo ""
+    if [ -n "$CONFLICTS" ]; then
+        echo -e "${YELLOW}⚠  Conflicts to resolve by hand:${NC}"
+        echo "$CONFLICTS" | sed 's/^/    /'
+        echo ""
+        echo -e "  Dockerfiles / n8n-task-runners.json -> take UPSTREAM's version:"
+        echo "    git checkout upstream/main -- <file> && git add <file>"
+        echo "    (your packages live in custom/config.json and are re-injected by build.py)"
+        echo ""
+        echo -e "  docker-compose.yml -> resolve by hand. Customizations belong in"
+        echo "    docker-compose.override.yml where possible (see FORK.md)."
+    else
+        echo -e "${GREEN}✓ No conflicts -- merge is staged clean.${NC}"
+    fi
+
+    echo ""
+    echo -e "${CYAN}Staged changes:${NC}"
+    git diff --cached --stat | tail -30
+
+    echo ""
+    echo -e "${YELLOW}NOTHING HAS BEEN COMMITTED.${NC} Inspect, then:"
+    echo -e "  Inspect a file:  git diff --cached <file>"
+    echo -e "  Finish:          ./upstream-sync.sh done"
+    echo -e "  Cancel:          ./upstream-sync.sh abort   (or: git reset --hard $ROLLBACK_TAG)"
     ;;
 
 done)

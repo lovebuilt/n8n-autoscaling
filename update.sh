@@ -44,13 +44,17 @@ fi
 # Step 4: Rebuild all n8n services
 echo
 echo "[4/7] Rebuilding containers (n8n + webhook + worker + runners)..."
-docker compose build --no-cache --pull n8n n8n-webhook n8n-worker n8n-worker-runner
+# Regenerate .build files from upstream + custom/config.json before building.
+# build.py verifies its output and exits 1 if anything regressed -- fail loudly.
+python3 custom/build.py
+
+docker compose build --no-cache --pull n8n n8n-webhook n8n-worker n8n-worker-runner n8n-autoscaler
 echo "  Build complete."
 
 # Step 5: Recreate containers
 echo
 echo "[5/7] Restarting containers..."
-docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-worker-runner
+docker compose up -d --force-recreate n8n n8n-webhook n8n-worker n8n-worker-runner n8n-autoscaler
 echo "  Containers restarted."
 
 # Step 6: Health check
@@ -60,7 +64,7 @@ sleep 30
 
 HEALTHY=0
 UNHEALTHY=0
-for svc in n8n n8n-webhook n8n-worker n8n-worker-runner; do
+for svc in n8n n8n-webhook n8n-worker n8n-worker-runner n8n-autoscaler; do
     CONTAINER="n8n-autoscaling-${svc}-1"
     STATUS=$(docker inspect --format='{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo "missing")
     HEALTH=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}' "$CONTAINER" 2>/dev/null || echo "unknown")
