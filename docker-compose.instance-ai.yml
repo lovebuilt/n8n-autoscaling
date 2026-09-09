@@ -1,0 +1,16 @@
+# Main-instance-only configuration for n8n Instance AI.
+# Provider credentials live in the provider-specific overrides so they are never
+# forwarded to webhook processors or queue workers.
+services:
+  n8n:
+    environment:
+      N8N_ENABLED_MODULES: ${N8N_ENABLED_MODULES:-instance-ai}
+      N8N_INSTANCE_AI_SANDBOX_ENABLED: ${N8N_INSTANCE_AI_SANDBOX_ENABLED:-true}
+      N8N_INSTANCE_AI_SANDBOX_PROVIDER: ${N8N_INSTANCE_AI_SANDBOX_PROVIDER:-n8n-sandbox}
+      # Null passthrough omits unset values entirely, keeping n8n's UI-managed
+      # provider fields editable. The wizard uncomments them only on request.
+      N8N_INSTANCE_AI_MODEL:
+      N8N_INSTANCE_AI_MODEL_URL:
+      N8N_INSTANCE_AI_MODEL_API_KEY:
+      INSTANCE_AI_BRAVE_SEARCH_API_KEY:
+      N8N_INSTANCE_AI_SEARXNG_URL:

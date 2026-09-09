@@ -1,8 +1,8 @@
-# n8n Autoscaling System (n8n 2.0 Ready)
+# n8n Autoscaling System (n8n 2.0 + Instance AI Ready)
 
 A Docker-based autoscaling solution for n8n workflow automation platform. Dynamically scales worker containers based on Redis queue length. No need to deal with k8s or any other container scaling provider - a simple script runs it all and is easily configurable.
 
-**Now updated for n8n 2.0** with external task runners support.
+**Now updated for n8n 2.0** with external task runners support and optional n8n Instance AI sandbox providers.
 
 Tested with hundreds of simultaneous executions running on an 8 core 16gb ram VPS.
 
@@ -33,6 +33,10 @@ graph TD
     F[PostgreSQL] -->|Stores data| A
     A -->|Webhooks| G[n8n Webhook]
     H[Cloudflared] -->|Tunnel| A
+    A -.->|Instance AI, optional| IA[AI Assistant]
+    IA -.->|Code execution| SA[Sandbox API]
+    SA -.-> SR[Isolated Sandbox Runner]
+    IA -.->|Web search| SX[SearXNG]
 ```
 
 ### Services
@@ -49,6 +53,10 @@ graph TD
 | `redis-monitor` | Queue monitoring |
 | `n8n-backup` | Scheduled backups to cloud storage (optional) |
 | `cloudflared` | Cloudflare tunnel |
+| `sandbox-api` | Internal self-hosted Instance AI sandbox API (optional) |
+| `sandbox-runner-1` | Sysbox or privileged Docker-in-Docker sandbox runner (optional) |
+| `sandbox-certs` | One-shot mTLS certificate bootstrap (optional) |
+| `searxng` | Internal web search for Instance AI (optional) |
 
 > **Note:** The main n8n instance does not need its own task runner because all executions (including manual runs) are offloaded to workers via `OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true`. Each worker has its own task runner sidecar.
 
@@ -66,6 +74,8 @@ graph TD
 - External npm packages (ajv, puppeteer-core, playwright-core, etc.)
 - Scheduled backups with PostgreSQL + Redis + volume data, GPG encryption, multi-cloud upload
 - Interactive setup wizard and systemd service generator
+- Instance AI wizard choice: self-hosted n8n Sandbox, Daytona, or disabled
+- Automatic self-hosted sandbox mTLS secrets, internal SearXNG, health checks, and isolation selection
 - Multi-architecture support (amd64, arm64, armhf)
 - Podman rootless support via compose override
 - Example workflows ready to import
@@ -75,6 +85,11 @@ graph TD
 - Docker and Docker Compose (or Podman with podman-compose)
 - If you are a new user, I recommend either Docker Desktop or using the docker convenience script for Ubuntu
 - Set up your Cloudflare domain and subdomains
+- Self-hosted Instance AI sandbox: rootful Docker 24+; production Linux also requires [sysbox-runc](https://github.com/n8n-io/n8n-sandbox-service/blob/main/docs/quickstart-linux.md)
+
+Podman and rootless Docker remain supported for the core autoscaling stack and the Daytona option, but not for the upstream self-hosted n8n Sandbox Service.
+
+Container named volumes belong to one daemon identity—not just an engine name. Docker vs Podman, rootless vs rootful mode, and different local API sockets/contexts can all point at separate data stores. The wizard persists all three fields and blocks an identity change rather than starting n8n against an empty database. To migrate, back up and stop the recorded daemon, restore and verify the data on the selected daemon, then update `CONTAINER_RUNTIME`, `CONTAINER_RUNTIME_MODE`, and `DOCKER_SOCK` in `.env` to that verified destination before rerunning the wizard.
 
 ## Quick Start
 
@@ -93,6 +108,8 @@ The setup wizard will guide you through:
 - Setting autoscaling parameters
 - Configuring backups (schedule, encryption, cloud storage, notifications)
 - Detecting your container runtime (Docker/Podman, rootless/rootful)
+- Choosing self-hosted n8n Sandbox, Daytona, or no Instance AI sandbox
+- Generating and preserving sandbox mTLS/API secrets and the complete Compose file list
 - Creating the external network
 - Starting all services with health checks
 
@@ -114,6 +131,7 @@ The setup wizard will guide you through:
    - Update domain settings (`N8N_HOST`, `N8N_WEBHOOK`, etc.)
    - Add your `CLOUDFLARE_TUNNEL_TOKEN`
    - Optionally set `TAILSCALE_IP` for private access
+   - For Instance AI, use the wizard or follow the provider configuration below
 
 4. Create the external network:
    ```bash
@@ -147,6 +165,74 @@ The setup wizard will guide you through:
 | `N8N_RUNNERS_AUTH_TOKEN` | Auth token for runners | (set your own) |
 | `N8N_RUNNERS_MAX_CONCURRENCY` | Max concurrent tasks per runner | 5 |
 | `NODE_FUNCTION_ALLOW_EXTERNAL` | Allowed npm packages in Code nodes | ajv,puppeteer-core,playwright-core,... |
+
+### Instance AI and Sandbox Providers (Preview)
+
+n8n Instance AI can use either provider; Daytona is not mandatory. The setup wizard offers:
+
+| Option | What the wizard configures | Runtime support |
+|--------|----------------------------|-----------------|
+| Self-hosted n8n Sandbox | mTLS certificates, internal sandbox API, one isolated runner, generated secret pairs, persistent API state, and internal SearXNG | Rootful Docker only; Sysbox for production Linux or explicitly acknowledged privileged mode for local/test |
+| Daytona | Daytona URL, API key, sandbox image, and lifecycle defaults | Docker or Podman |
+| Disabled | Adds `instance-ai` to `N8N_DISABLED_MODULES` and runs no sandbox services | Any supported runtime |
+
+Instance AI is still Preview. [n8n's product documentation](https://docs.n8n.io/deploy/host-n8n/configure-n8n/set-up-ai-assistant) recommends Daytona for production and describes its own sandbox as a local development/testing option. This project also supports the sandbox service's Sysbox topology for operators who deliberately choose to own that production infrastructure; that does not change n8n's provider recommendation.
+
+The self-hosted services do not publish host ports. Instance AI/model variables are injected only into the main `n8n` service; webhook processors and workers do not receive them in their environments. The autoscaler remains a privileged component: it mounts this project (including `.env`) and the container-engine socket so it can recreate workers. The wizard stores the selected ordered overrides in `COMPOSE_FILE`, so ordinary commands such as `docker compose up -d`, systemd startup, and autoscaler-created workers all retain the same configuration.
+
+Instance AI also needs a model credential. The wizard can save `N8N_INSTANCE_AI_MODEL`, `N8N_INSTANCE_AI_MODEL_API_KEY`, and an optional OpenAI-compatible `N8N_INSTANCE_AI_MODEL_URL`, or you can configure the model later in n8n's AI settings. Leaving the model variables unset/commented keeps model selection editable in the UI; setting them makes the model environment-managed. The sandbox infrastructure can be healthy before a model is configured, but the assistant cannot answer until a model is available.
+
+This stack pins both n8n and its external task runner to `2.36.8`, the version used to validate the integration and sandbox protocol; 2.35.7 is the minimum supported release. The wizard records that pin in existing environments when it is missing. Change the server and task-runner version together, then retest the sandbox. The stack intentionally uses the canonical [`N8N_SANDBOX_SERVICE_URL` and `N8N_SANDBOX_SERVICE_API_KEY`](https://github.com/n8n-io/n8n/blob/n8n%402.36.8/packages/%40n8n/config/src/configs/instance-ai.config.ts#L59-L85). Do not use `N8N_INSTANCE_AI_SANDBOX_API_URL` or `N8N_INSTANCE_AI_SANDBOX_API_KEY`; n8n does not read those names.
+
+On an existing n8n database, the saved AI Assistant and Sandbox on/off values take precedence over their environment defaults. The wizard provisions a valid environment-managed provider connection, but it cannot safely edit n8n's database-backed admin settings. After enabling the feature on an existing installation, verify both AI Assistant and Sandbox are enabled in AI Assistant settings once. When switching providers, also verify the selected provider and disconnect the old saved sandbox connection if it remains selected. Fresh installations use the wizard's enabled defaults. The disabled wizard option is authoritative because it adds `instance-ai` to `N8N_DISABLED_MODULES`, so saved toggles cannot reactivate the module. For Daytona, n8n also lets a previously saved sandbox image override the environment image; verify that setting if a migrated Daytona sandbox fails to start.
+
+#### Self-hosted isolation
+
+On Linux production hosts, install Sysbox first and verify that `docker info --format '{{json .Runtimes}}'` lists `sysbox-runc`. The wizard detects it and automatically selects `docker-compose.ai-sandbox.sysbox.yml`. This is the [upstream production Linux topology](https://github.com/n8n-io/n8n-sandbox-service/blob/main/docs/quickstart-linux.md). The pinned sandbox images support amd64 and arm64; the wizard rejects unsupported host architectures. Docker Engine 24+, the Docker Compose v2 plugin, and a Linux kernel newer than 5.19 are required; review the upstream distro constraints before installing Sysbox.
+
+If Sysbox is absent, the wizard can use `docker-compose.ai-sandbox.privileged.yml` only after an explicit warning. A privileged Docker-in-Docker runner is host-root-equivalent and is intended for Docker Desktop or local/test use, not an internet-facing production server. The API, runner, and SearXNG remain on a dedicated bridge with no published ports in either mode.
+
+The validated image bundle pins the sandbox service to `1.1.1`, its transitional inner sandbox image to `1.1.0`, and SearXNG to rolling build `2026.8.28-a30b2d474`. These versions passed the n8n 2.36.8 create/execute/delete smoke test. Do not change them independently or use floating `latest`/`stable` tags: future unified sandbox releases must move the API, runner, and inner image together, and transport changes may require coordinated certificate paths and health checks.
+
+#### Manual provider selection
+
+The wizard is recommended because it generates three independent secret pairs and keeps upgrades idempotent. For a manual self-hosted setup, the important relationships are:
+
+```env
+COMPOSE_FILE=docker-compose.yml:docker-compose.instance-ai.yml:docker-compose.ai-sandbox.yml:docker-compose.ai-sandbox.sysbox.yml
+ENABLE_AI_ASSISTANT=true
+N8N_ENABLED_MODULES=instance-ai
+N8N_DISABLED_MODULES=
+N8N_INSTANCE_AI_SANDBOX_ENABLED=true
+N8N_INSTANCE_AI_SANDBOX_PROVIDER=n8n-sandbox
+N8N_SANDBOX_ISOLATION=sysbox
+N8N_SANDBOX_SERVICE_URL=http://sandbox-api:8080
+N8N_INSTANCE_AI_SEARXNG_URL=http://searxng:8080
+
+# Generate A, B, and C independently with `openssl rand -hex 32`.
+SANDBOX_API_KEYS=A
+N8N_SANDBOX_SERVICE_API_KEY=A
+SANDBOX_API_RUNNER_REGISTRATION_TOKEN=B
+SANDBOX_RUNNER_REGISTRATION_TOKEN=B
+SANDBOX_API_RUNNER_API_KEY=C
+SANDBOX_RUNNER_API_KEYS=C
+SEARXNG_SECRET=GENERATE_ANOTHER_SECRET
+```
+
+For Daytona:
+
+```env
+COMPOSE_FILE=docker-compose.yml:docker-compose.instance-ai.yml:docker-compose.ai-daytona.yml
+ENABLE_AI_ASSISTANT=true
+N8N_ENABLED_MODULES=instance-ai
+N8N_DISABLED_MODULES=
+N8N_INSTANCE_AI_SANDBOX_ENABLED=true
+N8N_INSTANCE_AI_SANDBOX_PROVIDER=daytona
+DAYTONA_API_URL=https://app.daytona.io/api
+DAYTONA_API_KEY=YOUR_DAYTONA_API_KEY
+```
+
+Keep `.env` mode `0600`. Switching providers through the wizard preserves dormant credentials but removes their Compose override, so stale provider secrets are not forwarded to application containers. Starting with `--remove-orphans` removes containers from the previously selected provider without deleting its data volumes.
 
 ### Timeout Configuration
 
@@ -191,6 +277,12 @@ The system uses two PostgreSQL users:
 
 The `init-postgres.sh` script runs on first PostgreSQL initialization to create the application database and user. Set `POSTGRES_APP_PASSWORD` in `.env` to enable this separation.
 
+### Instance AI Sandbox Isolation
+
+The self-hosted sandbox uses mutual TLS for API/runner gRPC registration and control, separate random API/registration secrets, and an unexposed dedicated Docker network. In the pinned 1.1.1 protocol, runner HTTP traffic stays on that private network; newer sandbox releases change this transport and must be upgraded as a coordinated set. Certificate bootstrap keeps the CA private key in temporary memory and copies only role-specific leaf material into separate API and runner volumes. AI secrets are not injected into webhook or worker environments; the autoscaler can still read `.env` because its project and engine-socket mounts already make it a trusted, host-equivalent component.
+
+Sysbox is the production isolation path on Linux. The privileged fallback grants the runner broad host-kernel capabilities and must be treated as host-root-equivalent even though its ports are internal. Never publish ports `8080`, `9090`, or `9091` from the sandbox services.
+
 ## Compose Override Files
 
 Modular override files allow you to customize the deployment without editing the main `docker-compose.yml`:
@@ -198,6 +290,11 @@ Modular override files allow you to customize the deployment without editing the
 | File | Purpose | Usage |
 |------|---------|-------|
 | `docker-compose.cloudflare.yml` | Binds n8n to localhost only (Cloudflare handles access) | `-f docker-compose.yml -f docker-compose.cloudflare.yml` |
+| `docker-compose.instance-ai.yml` | Main-instance-only Instance AI/model configuration | Included for either sandbox provider |
+| `docker-compose.ai-daytona.yml` | Daytona credentials and lifecycle policy | Added when Daytona is selected |
+| `docker-compose.ai-sandbox.yml` | Self-hosted API, runner, mTLS, persistent state, and SearXNG | Added when self-hosted is selected |
+| `docker-compose.ai-sandbox.sysbox.yml` | Production Linux Sysbox runner isolation | Added after the self-hosted override |
+| `docker-compose.ai-sandbox.privileged.yml` | Local/test privileged runner isolation | Added after the self-hosted override |
 | `docker-compose.podman.yml` | Adds `:Z,U` flags for rootless Podman SELinux/UID mapping | `-f docker-compose.yml -f docker-compose.podman.yml` |
 
 Example with Cloudflare override:
@@ -226,7 +323,7 @@ discovery. It is an ordered list separated by `:` on Linux/macOS; set
 be readable inside the autoscaler container. `COMPOSE_FILE_PATH` remains
 available as a backward-compatible single-file fallback.
 
-To enable the Cloudflare override with the setup wizard or systemd generator, set `ENABLE_CLOUDFLARE_OVERRIDE=true` in your `.env`.
+To enable the Cloudflare override with the setup wizard or systemd generator, set `ENABLE_CLOUDFLARE_OVERRIDE=true` in your `.env`. The wizard updates `COMPOSE_FILE` whenever the runtime or Instance AI provider changes while preserving custom override files at the end of the list.
 
 ## Systemd Integration
 
@@ -238,9 +335,15 @@ Generate a systemd service file for automatic startup:
 
 The generator will:
 - Detect Docker vs Podman and rootless vs rootful mode
-- Build the correct compose file list with detected overrides
-- Create a system or user-level service file
+- Install a runtime wrapper that reads `CONTAINER_RUNTIME`, its persisted mode/socket identity, and `COMPOSE_FILE` on every lifecycle action
+- Follow later provider/Compose changes and same-scope Docker/Podman changes without baking old commands into the unit
+- Order shutdown before Docker or the Podman API socket stops, and wait briefly for the selected engine during parallel boot
+- Create a system service for rootful engines (requesting `sudo` only to install/manage it) or a user service for rootless engines
 - Optionally enable and start the service
+
+Older `.env` files may not contain `CONTAINER_RUNTIME_MODE`; run `./n8n-setup.sh` once after upgrading so the wizard can infer the identity only when the current daemon actually owns the project data. Then run `./generate-systemd.sh` to replace units containing hard-coded `-f` flags. Regenerating an active unit restarts it so provider changes take effect immediately. Regenerate again after a verified change between rootless and rootful operation because those modes belong to different systemd managers.
+
+For Podman, the wizard requires a local active Unix API socket and starts `podman.socket` through systemd when possible. It rejects remote Podman connections because a remote server path cannot safely be bind-mounted into the autoscaler.
 
 ## Log Rotation
 
@@ -578,6 +681,27 @@ If Code nodes fail, check worker task runner logs:
 docker compose logs n8n-worker-runner
 ```
 
+### Instance AI sandbox issues
+
+Check the internal API, runner, and search service selected by the wizard:
+
+```bash
+docker compose ps sandbox-api sandbox-runner-1 searxng
+docker compose logs sandbox-api sandbox-runner-1 searxng
+```
+
+For a Sysbox deployment, verify the runtime is registered:
+
+```bash
+docker info --format '{{json .Runtimes}}'
+```
+
+If `sandbox-certs` shows `Exited (0)`, that is expected: it is a one-shot mTLS bootstrap container. The runner `/readyz` check covers runner readiness, but it does not prove API registration or an end-to-end sandbox create/execute cycle. Inspect both sandbox logs for registration or image-pull errors, and allow extra time for the first sandbox creation after an image change. If the API reports authentication or registration failures, verify each paired value in `.env` is identical, then rerun the wizard; existing valid secrets are preserved. Do not replace the canonical `N8N_SANDBOX_SERVICE_*` variables with the similarly named `N8N_INSTANCE_AI_SANDBOX_API_*` variables.
+
+The role certificates are deliberately not rotated underneath running API/runner containers. Before they expire, schedule a maintenance window, run `docker compose down`, remove both `<project>_sandbox_api_tls` and `<project>_sandbox_runner_tls` volumes together, then run `docker compose up -d --build`. The one-shot bootstrap will create one new CA and both matching role bundles. Never remove `sandbox_api_data`, PostgreSQL, Redis, or n8n data volumes during this procedure; removing only one TLS volume is rejected to prevent a split CA.
+
+The assistant UI can be present while chat remains unavailable if no model key or custom model endpoint is configured. Set it through the wizard, n8n AI settings, or the `N8N_INSTANCE_AI_MODEL*` variables and recreate the main service.
+
 ### Webhook URL format
 Webhooks use your Cloudflare subdomain:
 ```
@@ -590,13 +714,20 @@ https://webhook.yourdomain.com/webhook/your-webhook-id
 .
 ├── docker-compose.yml              # Main compose file
 ├── docker-compose.cloudflare.yml   # Cloudflare tunnel override (localhost binding)
+├── docker-compose.instance-ai.yml  # Main-only Instance AI environment
+├── docker-compose.ai-daytona.yml   # Daytona provider override
+├── docker-compose.ai-sandbox.yml   # Self-hosted sandbox API/runner/SearXNG
+├── docker-compose.ai-sandbox.sysbox.yml      # Production Linux isolation
+├── docker-compose.ai-sandbox.privileged.yml  # Local/test isolation fallback
 ├── docker-compose.podman.yml       # Podman rootless override (SELinux/UID flags)
+├── searxng-settings.yml            # Enables SearXNG JSON responses for Instance AI
 ├── Dockerfile                      # Main n8n image (based on n8nio/n8n)
 ├── Dockerfile.runner               # Task runner image (based on n8nio/runners)
 ├── n8n-task-runners.json           # Task runner launcher config
 ├── init-postgres.sh                # PostgreSQL app user initialization
 ├── n8n-setup.sh                    # Interactive setup wizard
 ├── generate-systemd.sh             # Systemd service generator
+├── compose-stack.sh                # Runtime-aware systemd lifecycle wrapper
 ├── .env.example                    # Example environment configuration
 ├── .env                            # Your configuration (git-ignored)
 ├── .dockerignore                   # Docker build context exclusions

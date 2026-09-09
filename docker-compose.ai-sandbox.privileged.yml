@@ -1,0 +1,5 @@
+# Local/test isolation fallback for Docker Desktop and non-production hosts.
+# This container is host-root-equivalent; never expose its ports.
+services:
+  sandbox-runner-1:
+    privileged: true

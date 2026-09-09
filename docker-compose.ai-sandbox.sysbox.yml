@@ -1,0 +1,5 @@
+# Production Linux isolation for the self-hosted sandbox.
+# Requires sysbox-runc to be installed and registered with Docker.
+services:
+  sandbox-runner-1:
+    runtime: sysbox-runc

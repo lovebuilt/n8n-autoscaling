@@ -6,7 +6,7 @@
 set -e
 
 # Colors
-if command -v tput >/dev/null 2>&1; then
+if command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
     RED=$(tput setaf 1)
     GREEN=$(tput setaf 2)
     YELLOW=$(tput setaf 3)
@@ -17,7 +17,7 @@ else
     RED='' GREEN='' YELLOW='' BLUE='' CYAN='' NC=''
 fi
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR"
 
 # ============================================================
@@ -33,6 +33,180 @@ get_existing_value() {
     else
         echo "$default"
     fi
+}
+
+set_env_value() {
+    local key="$1" value="$2" escaped
+    escaped=${value//\\/\\\\}
+    escaped=${escaped//&/\\&}
+    escaped=${escaped//|/\\|}
+
+    if grep -q "^${key}=" .env 2>/dev/null; then
+        sed -i.bak "s|^${key}=.*|${key}=${escaped}|" .env
+    elif grep -q "^#${key}=" .env 2>/dev/null; then
+        sed -i.bak "s|^#${key}=.*|${key}=${escaped}|" .env
+    else
+        printf '\n%s=%s\n' "$key" "$value" >> .env
+    fi
+}
+
+unset_env_value() {
+    local key="$1"
+    if grep -q "^${key}=" .env 2>/dev/null; then
+        sed -i.bak "s|^${key}=.*|#${key}=|" .env
+    fi
+}
+
+secret_is_usable() {
+    local value="$1"
+    [ -n "$value" ] && [[ ! "$value" =~ ^(YOUR|REPLACE|GENERATE|change-me) ]] && \
+        [ "$value" != "changeme" ] && [ "$value" != "password" ] && \
+        [ "$value" != "secret" ] && [ "$value" != "test" ] && [ "$value" != "123456" ]
+}
+
+ensure_secret_pair() {
+    local first_key="$1" second_key="$2" first_value second_value value
+    first_value=$(get_existing_value "$first_key" "")
+    second_value=$(get_existing_value "$second_key" "")
+
+    if secret_is_usable "$first_value"; then
+        value="$first_value"
+    elif secret_is_usable "$second_value"; then
+        value="$second_value"
+    else
+        value=$(openssl rand -hex 32)
+    fi
+
+    if [ "${#value}" -lt 32 ]; then
+        echo "${YELLOW}Warning: preserving an existing short value for $first_key/$second_key; rotate it when practical.${NC}" >&2
+    fi
+
+    set_env_value "$first_key" "$value"
+    set_env_value "$second_key" "$value"
+}
+
+# Keep a single client key valid against a server's comma-separated accepted
+# key list. This preserves overlap during rotations instead of copying the
+# entire list into a client key field.
+ensure_client_key_in_list() {
+    local list_key="$1" client_key="$2" list_value client_value selected_value=""
+    local item new_list=""
+    local -a list_items
+    list_value=$(get_existing_value "$list_key" "")
+    client_value=$(get_existing_value "$client_key" "")
+
+    if secret_is_usable "$client_value" && [[ "$client_value" != *,* ]]; then
+        selected_value="$client_value"
+    else
+        local IFS=','
+        read -ra list_items <<< "$list_value"
+        for item in "${list_items[@]}"; do
+            item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            if secret_is_usable "$item"; then
+                selected_value="$item"
+            fi
+        done
+    fi
+
+    if [ -z "$selected_value" ]; then
+        selected_value=$(openssl rand -hex 32)
+    fi
+
+    if [ "${#selected_value}" -lt 32 ]; then
+        echo "${YELLOW}Warning: preserving an existing short client key for $list_key; rotate it when practical.${NC}" >&2
+    fi
+
+    local IFS=','
+    read -ra list_items <<< "$list_value"
+    local selected_present=false
+    for item in "${list_items[@]}"; do
+        item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        if secret_is_usable "$item"; then
+            [ -n "$new_list" ] && new_list+=","
+            new_list+="$item"
+            [ "$item" = "$selected_value" ] && selected_present=true
+        fi
+    done
+    if [ "$selected_present" = "false" ]; then
+        [ -n "$new_list" ] && new_list+=","
+        new_list+="$selected_value"
+    fi
+
+    set_env_value "$list_key" "$new_list"
+    set_env_value "$client_key" "$selected_value"
+}
+
+ensure_secret() {
+    local key="$1" value
+    value=$(get_existing_value "$key" "")
+    if ! secret_is_usable "$value"; then
+        value=$(openssl rand -hex 32)
+        set_env_value "$key" "$value"
+    elif [ "${#value}" -lt 32 ]; then
+        echo "${YELLOW}Warning: preserving an existing short value for $key; rotate it when practical.${NC}" >&2
+    fi
+}
+
+ensure_default_value() {
+    local key="$1" default_value="$2"
+    if [ -z "$(get_existing_value "$key" "")" ]; then
+        set_env_value "$key" "$default_value"
+    fi
+}
+
+ensure_csv_value() {
+    local key="$1" required_value="$2" current_value
+    current_value=$(get_existing_value "$key" "")
+    if [ -z "$current_value" ]; then
+        set_env_value "$key" "$required_value"
+    elif [[ ",$current_value," != *",$required_value,"* ]]; then
+        set_env_value "$key" "${current_value},${required_value}"
+    fi
+}
+
+remove_csv_value() {
+    local key="$1" removed_value="$2" current_value item joined=""
+    local -a current_items
+    current_value=$(get_existing_value "$key" "")
+    local IFS=','
+    read -ra current_items <<< "$current_value"
+    for item in "${current_items[@]}"; do
+        item=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$item" ] && continue
+        [ "$item" = "$removed_value" ] && continue
+        [ -n "$joined" ] && joined+=","
+        joined+="$item"
+    done
+    set_env_value "$key" "$joined"
+}
+
+infer_runtime_mode_from_socket() {
+    case "${1:-}" in
+        /run/user/*) echo "rootless" ;;
+        /var/run/docker.sock|/run/docker.sock|/run/podman/podman.sock) echo "rootful" ;;
+        *) echo "" ;;
+    esac
+}
+
+runtime_identity_changed() {
+    [ "$1" != "$4" ] || [ "$2" != "$5" ] || [ "$3" != "$6" ]
+}
+
+detect_docker_socket_path() {
+    local mode="$1" endpoint="${DOCKER_HOST:-}"
+    if [ -z "$endpoint" ] && docker context show &>/dev/null; then
+        endpoint=$(docker context inspect "$(docker context show)" --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)
+    fi
+    if [ -z "$endpoint" ]; then
+        if [ "$mode" = "rootless" ]; then
+            endpoint="/run/user/$(id -u)/docker.sock"
+        else
+            endpoint="/var/run/docker.sock"
+        fi
+    fi
+    endpoint=${endpoint#unix://}
+    [[ "$endpoint" = /* ]] || return 1
+    echo "$endpoint"
 }
 
 detect_timezone() {
@@ -78,15 +252,85 @@ validate_timezone() {
     echo "${RED}Invalid timezone. Use: UTC, America/New_York, Europe/London, etc.${NC}"; return 1
 }
 
-# Build compose file list based on detected configuration
-build_compose_files() {
-    local runtime="$1"
-    local files="-f docker-compose.yml"
+# Return the ordered Compose file list managed by this wizard, preserving any
+# user-supplied custom overrides after the managed files.
+compose_file_list() {
+    local runtime="$1" separator current_file base_name provider isolation
+    local -a files custom_files
+    separator=$(get_existing_value "COMPOSE_PATH_SEPARATOR" ":")
+    files=("docker-compose.yml")
+
     if [ -f .env ] && grep -q "^ENABLE_CLOUDFLARE_OVERRIDE=true" .env 2>/dev/null; then
-        [ -f docker-compose.cloudflare.yml ] && files="$files -f docker-compose.cloudflare.yml"
+        [ -f docker-compose.cloudflare.yml ] && files+=("docker-compose.cloudflare.yml")
     fi
-    [ "$runtime" = "podman" ] && [ -f docker-compose.podman.yml ] && files="$files -f docker-compose.podman.yml"
-    echo "$files"
+
+    if [ "$(get_existing_value "ENABLE_AI_ASSISTANT" "false")" = "true" ]; then
+        files+=("docker-compose.instance-ai.yml")
+        provider=$(get_existing_value "N8N_INSTANCE_AI_SANDBOX_PROVIDER" "n8n-sandbox")
+        if [ "$provider" = "n8n-sandbox" ]; then
+            files+=("docker-compose.ai-sandbox.yml")
+            isolation=$(get_existing_value "N8N_SANDBOX_ISOLATION" "sysbox")
+            if [ "$isolation" = "privileged" ]; then
+                files+=("docker-compose.ai-sandbox.privileged.yml")
+            else
+                files+=("docker-compose.ai-sandbox.sysbox.yml")
+            fi
+        elif [ "$provider" = "daytona" ]; then
+            files+=("docker-compose.ai-daytona.yml")
+        fi
+    fi
+
+    [ "$runtime" = "podman" ] && [ -f docker-compose.podman.yml ] && files+=("docker-compose.podman.yml")
+
+    # Setting COMPOSE_FILE disables Compose's implicit override discovery, so
+    # retain both explicit custom files and the conventional override file.
+    current_file=$(get_existing_value "COMPOSE_FILE" "")
+    if [ -n "$current_file" ]; then
+        local IFS="$separator"
+        read -ra configured_files <<< "$current_file"
+        for current_file in "${configured_files[@]}"; do
+            [ -z "$current_file" ] && continue
+            base_name=${current_file##*/}
+            case "$base_name" in
+                docker-compose.yml|docker-compose.cloudflare.yml|docker-compose.instance-ai.yml|docker-compose.ai-daytona.yml|docker-compose.ai-sandbox.yml|docker-compose.ai-sandbox.sysbox.yml|docker-compose.ai-sandbox.privileged.yml|docker-compose.podman.yml)
+                    ;;
+                *) custom_files+=("$current_file") ;;
+            esac
+        done
+    fi
+    if [ -f docker-compose.override.yml ]; then
+        local found_override=false
+        for current_file in "${custom_files[@]}"; do
+            [ "$current_file" = "docker-compose.override.yml" ] && found_override=true
+        done
+        [ "$found_override" = "false" ] && custom_files+=("docker-compose.override.yml")
+    fi
+    files+=("${custom_files[@]}")
+
+    local joined=""
+    for current_file in "${files[@]}"; do
+        [ -n "$joined" ] && joined+="$separator"
+        joined+="$current_file"
+    done
+    echo "$joined"
+}
+
+sync_compose_file_env() {
+    local runtime="$1"
+    set_env_value "COMPOSE_FILE" "$(compose_file_list "$runtime")"
+}
+
+# Build command-line flags from the same list used by plain `docker compose`.
+build_compose_files() {
+    local runtime="$1" separator compose_files compose_file flags=""
+    separator=$(get_existing_value "COMPOSE_PATH_SEPARATOR" ":")
+    compose_files=$(compose_file_list "$runtime")
+    local IFS="$separator"
+    read -ra configured_files <<< "$compose_files"
+    for compose_file in "${configured_files[@]}"; do
+        [ -n "$compose_file" ] && flags="$flags -f $compose_file"
+    done
+    echo "${flags# }"
 }
 
 # ============================================================
@@ -95,8 +339,11 @@ build_compose_files() {
 
 stop_all_containers_force() {
     echo "${BLUE}Stopping all containers...${NC}"
-    docker compose down -v 2>/dev/null || true
-    podman compose down 2>/dev/null || true
+    local configured_runtime compose_files
+    configured_runtime=$(get_existing_value "CONTAINER_RUNTIME" "docker")
+    compose_files=$(build_compose_files "$configured_runtime")
+    docker compose $compose_files down -v --remove-orphans 2>/dev/null || true
+    podman compose $compose_files down -v --remove-orphans 2>/dev/null || true
     docker ps -a --filter "name=n8n" -q 2>/dev/null | xargs -r docker stop 2>/dev/null || true
     docker ps -a --filter "name=n8n" -q 2>/dev/null | xargs -r docker rm 2>/dev/null || true
     podman ps -a --filter "name=n8n" -q 2>/dev/null | xargs -r podman stop 2>/dev/null || true
@@ -163,6 +410,12 @@ reset_environment() {
 # Main Menu
 # ============================================================
 
+# Allow the helper functions above to be sourced by tests and maintenance
+# tooling without launching the interactive wizard.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
 echo "${CYAN}n8n-autoscaling Setup Wizard${NC}"
 echo "============================"
 echo ""
@@ -226,6 +479,14 @@ if [ ! -f .env ]; then
     cp .env.example .env
     echo "${GREEN}Created .env file from .env.example${NC}"
 fi
+
+# Protect existing credentials immediately. The wizard may exit before the
+# final cleanup step, so do not wait until setup completes to restrict access.
+chmod 600 .env
+
+# Record the tested server/runner pair so a future repository default cannot
+# silently upgrade an existing installation when the wizard is rerun.
+ensure_default_value "N8N_VERSION" "2.36.8"
 
 # ============================================================
 # Step 2: Secret Generation
@@ -763,25 +1024,236 @@ echo "-------------------------"
 
 CONTAINER_RUNTIME=""
 RUNTIME_MODE=""
+DOCKER_AVAILABLE=false
+PODMAN_AVAILABLE=false
+PREVIOUS_CONTAINER_RUNTIME=$(get_existing_value "CONTAINER_RUNTIME" "")
+PREVIOUS_RUNTIME_MODE=$(get_existing_value "CONTAINER_RUNTIME_MODE" "")
+PREVIOUS_RUNTIME_SOCKET=$(get_existing_value "DOCKER_SOCK" "")
+PREVIOUS_RUNTIME_SOCKET=${PREVIOUS_RUNTIME_SOCKET#unix://}
+SETUP_WAS_COMPLETED=$(get_existing_value "SETUP_COMPLETED" "false")
 
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    DOCKER_AVAILABLE=true
+fi
 if command -v podman &>/dev/null && podman info &>/dev/null 2>&1; then
-    if podman info --format "{{.Host.Security.Rootless}}" 2>/dev/null | grep -q "true"; then
-        CONTAINER_RUNTIME="podman"; RUNTIME_MODE="rootless"
-    else
-        CONTAINER_RUNTIME="podman"; RUNTIME_MODE="rootful"
+    PODMAN_AVAILABLE=true
+fi
+
+COMPOSE_PROJECT=$(get_existing_value "COMPOSE_PROJECT_NAME" "n8n-autoscaling")
+DOCKER_PROJECT_HAS_DATA=false
+PODMAN_PROJECT_HAS_DATA=false
+if [ "$DOCKER_AVAILABLE" = "true" ]; then
+    if [ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" 2>/dev/null)" ] || \
+       docker volume inspect "${COMPOSE_PROJECT}_postgres_data" &>/dev/null || \
+       docker volume inspect "${COMPOSE_PROJECT}_n8n_main" &>/dev/null; then
+        DOCKER_PROJECT_HAS_DATA=true
     fi
-elif command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-    if docker info 2>/dev/null | grep -q "rootless"; then
-        CONTAINER_RUNTIME="docker"; RUNTIME_MODE="rootless"
-    else
-        CONTAINER_RUNTIME="docker"; RUNTIME_MODE="rootful"
+fi
+if [ "$PODMAN_AVAILABLE" = "true" ]; then
+    if [ -n "$(podman ps -aq --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" 2>/dev/null)" ] || \
+       podman volume inspect "${COMPOSE_PROJECT}_postgres_data" &>/dev/null || \
+       podman volume inspect "${COMPOSE_PROJECT}_n8n_main" &>/dev/null; then
+        PODMAN_PROJECT_HAS_DATA=true
     fi
+fi
+
+if [ -z "$PREVIOUS_CONTAINER_RUNTIME" ]; then
+    if [ "$DOCKER_PROJECT_HAS_DATA" = "true" ] && [ "$PODMAN_PROJECT_HAS_DATA" = "true" ]; then
+        echo "${RED}Existing $COMPOSE_PROJECT data was found in both Docker and Podman.${NC}"
+        echo "Resolve which engine owns the authoritative deployment before rerunning the wizard."
+        exit 1
+    elif [ "$DOCKER_PROJECT_HAS_DATA" = "true" ]; then
+        PREVIOUS_CONTAINER_RUNTIME="docker"
+        echo "${YELLOW}Legacy configuration: inferred Docker from existing project containers/volumes.${NC}"
+    elif [ "$PODMAN_PROJECT_HAS_DATA" = "true" ]; then
+        PREVIOUS_CONTAINER_RUNTIME="podman"
+        echo "${YELLOW}Legacy configuration: inferred Podman from existing project containers/volumes.${NC}"
+    fi
+    if [ -z "$PREVIOUS_CONTAINER_RUNTIME" ] && [ "$(get_existing_value "SETUP_COMPLETED" "false")" = "true" ]; then
+        echo "${RED}Legacy setup has no recorded runtime and no engine-local project data could be identified.${NC}"
+        echo "Restore access to the previous engine or set CONTAINER_RUNTIME only after verifying where the data lives."
+        exit 1
+    fi
+fi
+
+if [ "$DOCKER_AVAILABLE" = "true" ] && [ "$PODMAN_AVAILABLE" = "true" ]; then
+    CURRENT_RUNTIME="$PREVIOUS_CONTAINER_RUNTIME"
+    echo "Both Docker and Podman are available:"
+    echo "  1. Docker (required for the self-hosted n8n Sandbox)"
+    echo "  2. Podman"
+    if [ "$CURRENT_RUNTIME" = "podman" ]; then
+        RUNTIME_DEFAULT=2
+    elif [ "$CURRENT_RUNTIME" = "docker" ]; then
+        RUNTIME_DEFAULT=1
+    else
+        RUNTIME_DEFAULT=""
+        echo "No previous runtime is recorded; choose explicitly because Docker and Podman use separate data volumes."
+    fi
+    while true; do
+        if [ -n "$RUNTIME_DEFAULT" ]; then
+            echo -n "Runtime [1-2, default $RUNTIME_DEFAULT]: "
+        else
+            echo -n "Runtime [1-2]: "
+        fi
+        read -r runtime_choice
+        runtime_choice=${runtime_choice:-$RUNTIME_DEFAULT}
+        [[ "$runtime_choice" =~ ^[12]$ ]] && break
+        echo "${RED}Choose 1 or 2.${NC}"
+    done
+    if [ "$runtime_choice" = "2" ]; then
+        CONTAINER_RUNTIME="podman"
+    else
+        CONTAINER_RUNTIME="docker"
+    fi
+elif [ "$DOCKER_AVAILABLE" = "true" ]; then
+    CONTAINER_RUNTIME="docker"
+elif [ "$PODMAN_AVAILABLE" = "true" ]; then
+    CONTAINER_RUNTIME="podman"
 else
     echo "${RED}No container runtime found. Please install Docker or Podman.${NC}"
     exit 1
 fi
 
+if [ "$CONTAINER_RUNTIME" = "podman" ]; then
+    if podman info --format "{{.Host.Security.Rootless}}" 2>/dev/null | grep -q "true"; then
+        RUNTIME_MODE="rootless"
+    else
+        RUNTIME_MODE="rootful"
+    fi
+elif [ "$CONTAINER_RUNTIME" = "docker" ]; then
+    if docker info 2>/dev/null | grep -q "rootless"; then
+        RUNTIME_MODE="rootless"
+    else
+        RUNTIME_MODE="rootful"
+    fi
+fi
+
+if [ "$CONTAINER_RUNTIME" = "docker" ]; then
+    if ! DOCKER_SOCK=$(detect_docker_socket_path "$RUNTIME_MODE"); then
+        echo "${RED}The selected Docker context is remote or does not expose a local Unix socket.${NC}"
+        echo "Select a local Docker context; the autoscaler must bind-mount its API socket."
+        exit 1
+    fi
+else
+    if [ "$(podman info --format '{{.Host.ServiceIsRemote}}' 2>/dev/null)" = "true" ]; then
+        echo "${RED}Remote Podman connections cannot be bind-mounted into the autoscaler.${NC}"
+        echo "Use a local Podman Unix socket, or select local Docker."
+        exit 1
+    fi
+    DOCKER_SOCK=$(podman info --format '{{.Host.RemoteSocket.Path}}' 2>/dev/null || true)
+    DOCKER_SOCK=${DOCKER_SOCK#unix://}
+    if [ -z "$DOCKER_SOCK" ]; then
+        if [ "$RUNTIME_MODE" = "rootless" ]; then
+            DOCKER_SOCK="/run/user/$(id -u)/podman/podman.sock"
+        else
+            DOCKER_SOCK="/run/podman/podman.sock"
+        fi
+    fi
+    if [[ "$DOCKER_SOCK" != /* ]]; then
+        echo "${RED}Podman reported a non-local socket path: $DOCKER_SOCK${NC}"
+        exit 1
+    fi
+fi
+
 echo "${BLUE}Detected: $CONTAINER_RUNTIME ($RUNTIME_MODE mode)${NC}"
+
+if [ -n "$PREVIOUS_CONTAINER_RUNTIME" ]; then
+    if [ -z "$PREVIOUS_RUNTIME_MODE" ]; then
+        PREVIOUS_RUNTIME_MODE=$(infer_runtime_mode_from_socket "$PREVIOUS_RUNTIME_SOCKET")
+        SELECTED_PROJECT_HAS_DATA=false
+        [ "$CONTAINER_RUNTIME" = "docker" ] && SELECTED_PROJECT_HAS_DATA="$DOCKER_PROJECT_HAS_DATA"
+        [ "$CONTAINER_RUNTIME" = "podman" ] && SELECTED_PROJECT_HAS_DATA="$PODMAN_PROJECT_HAS_DATA"
+        if [ -z "$PREVIOUS_RUNTIME_MODE" ] && \
+           [ "$PREVIOUS_CONTAINER_RUNTIME" = "$CONTAINER_RUNTIME" ] && \
+           [ "$SELECTED_PROJECT_HAS_DATA" = "true" ]; then
+            PREVIOUS_RUNTIME_MODE="$RUNTIME_MODE"
+            echo "${YELLOW}Legacy configuration: inferred $RUNTIME_MODE mode from existing project data.${NC}"
+        fi
+    fi
+    if [ -z "$PREVIOUS_RUNTIME_SOCKET" ] && \
+       [ "$PREVIOUS_CONTAINER_RUNTIME" = "$CONTAINER_RUNTIME" ] && \
+       [ "$PREVIOUS_RUNTIME_MODE" = "$RUNTIME_MODE" ]; then
+        SELECTED_PROJECT_HAS_DATA=false
+        [ "$CONTAINER_RUNTIME" = "docker" ] && SELECTED_PROJECT_HAS_DATA="$DOCKER_PROJECT_HAS_DATA"
+        [ "$CONTAINER_RUNTIME" = "podman" ] && SELECTED_PROJECT_HAS_DATA="$PODMAN_PROJECT_HAS_DATA"
+        if [ "$SELECTED_PROJECT_HAS_DATA" = "true" ]; then
+            PREVIOUS_RUNTIME_SOCKET="$DOCKER_SOCK"
+            echo "${YELLOW}Legacy configuration: inferred the container socket from existing project data.${NC}"
+        fi
+    fi
+
+    if [ "$SETUP_WAS_COMPLETED" = "true" ] && \
+       { [ -z "$PREVIOUS_RUNTIME_MODE" ] || [ -z "$PREVIOUS_RUNTIME_SOCKET" ]; }; then
+        echo "${RED}Legacy setup has no complete container-daemon identity.${NC}"
+        echo "Verify which daemon owns the database volumes, then set CONTAINER_RUNTIME, CONTAINER_RUNTIME_MODE, and DOCKER_SOCK in .env before rerunning."
+        exit 1
+    fi
+
+    # An interrupted setup with no known data can safely adopt the currently
+    # selected identity. Completed/identified deployments must never cross it
+    # implicitly because engine, privilege mode, and socket each select a
+    # potentially different named-volume store.
+    [ -z "$PREVIOUS_RUNTIME_MODE" ] && PREVIOUS_RUNTIME_MODE="$RUNTIME_MODE"
+    [ -z "$PREVIOUS_RUNTIME_SOCKET" ] && PREVIOUS_RUNTIME_SOCKET="$DOCKER_SOCK"
+
+    if runtime_identity_changed \
+        "$PREVIOUS_CONTAINER_RUNTIME" "$PREVIOUS_RUNTIME_MODE" "$PREVIOUS_RUNTIME_SOCKET" \
+        "$CONTAINER_RUNTIME" "$RUNTIME_MODE" "$DOCKER_SOCK"; then
+        echo "${RED}Automatic container-daemon identity switch blocked: named volumes are daemon-local.${NC}"
+        echo "Recorded: $PREVIOUS_CONTAINER_RUNTIME/$PREVIOUS_RUNTIME_MODE at $PREVIOUS_RUNTIME_SOCKET"
+        echo "Selected: $CONTAINER_RUNTIME/$RUNTIME_MODE at $DOCKER_SOCK"
+        echo "Perform a manual cutover: back up and stop the recorded daemon, restore and verify the data on the selected daemon,"
+        echo "then set CONTAINER_RUNTIME=$CONTAINER_RUNTIME, CONTAINER_RUNTIME_MODE=$RUNTIME_MODE, and DOCKER_SOCK=$DOCKER_SOCK in .env before rerunning."
+        echo "If the recorded identity came only from an interrupted empty setup, clear those three values and rerun instead."
+        exit 1
+    fi
+fi
+
+if [ "$RUNTIME_MODE" = "rootless" ] && [ -f "/etc/systemd/system/n8n-autoscaling.service" ] && command -v systemctl &>/dev/null; then
+    if systemctl is-active --quiet n8n-autoscaling.service || systemctl is-enabled --quiet n8n-autoscaling.service; then
+        echo "${YELLOW}A system-scoped n8n-autoscaling unit cannot manage the selected rootless runtime.${NC}"
+        echo -n "Disable and stop the old system unit now? [Y/n]: "
+        read -r disable_system_unit
+        if [[ -z "$disable_system_unit" || "$disable_system_unit" =~ ^[Yy] ]]; then
+            if [ "$EUID" -eq 0 ]; then
+                systemctl disable --now n8n-autoscaling.service
+            elif command -v sudo &>/dev/null; then
+                sudo systemctl disable --now n8n-autoscaling.service
+            else
+                echo "${RED}sudo is required to disable the stale system unit.${NC}"
+                exit 1
+            fi
+        else
+            echo "${RED}Runtime switch aborted to prevent both system and user units from managing the stack.${NC}"
+            exit 1
+        fi
+    fi
+fi
+
+if [ "$RUNTIME_MODE" = "rootful" ] && command -v systemctl &>/dev/null; then
+    OLD_USER_HOME="$HOME"
+    OLD_USER_NAME="${SUDO_USER:-}"
+    OLD_USER_SYSTEMCTL=(systemctl --user)
+    if [ "$EUID" -eq 0 ] && [ -n "$OLD_USER_NAME" ] && [ "$OLD_USER_NAME" != "root" ]; then
+        OLD_USER_HOME=$(getent passwd "$OLD_USER_NAME" 2>/dev/null | cut -d: -f6) || true
+        [ -z "$OLD_USER_HOME" ] && OLD_USER_HOME="/home/${OLD_USER_NAME}"
+        OLD_USER_UID=$(id -u "$OLD_USER_NAME")
+        OLD_USER_SYSTEMCTL=(sudo -u "$OLD_USER_NAME" env "XDG_RUNTIME_DIR=/run/user/${OLD_USER_UID}" systemctl --user)
+    fi
+    if [ -f "${OLD_USER_HOME}/.config/systemd/user/n8n-autoscaling.service" ] && \
+       { "${OLD_USER_SYSTEMCTL[@]}" is-active --quiet n8n-autoscaling.service || \
+         "${OLD_USER_SYSTEMCTL[@]}" is-enabled --quiet n8n-autoscaling.service; }; then
+        echo "${YELLOW}A user-scoped n8n-autoscaling unit cannot safely manage the selected rootful runtime.${NC}"
+        echo -n "Disable and stop the old user unit now? [Y/n]: "
+        read -r disable_user_unit
+        if [[ -z "$disable_user_unit" || "$disable_user_unit" =~ ^[Yy] ]]; then
+            "${OLD_USER_SYSTEMCTL[@]}" disable --now n8n-autoscaling.service
+        else
+            echo "${RED}Runtime switch aborted to prevent both system and user units from managing the stack.${NC}"
+            exit 1
+        fi
+    fi
+fi
 
 if [ "$RUNTIME_MODE" = "rootless" ]; then
     echo "${GREEN}Running in rootless mode.${NC}"
@@ -800,20 +1272,308 @@ fi
 
 echo "${GREEN}Using: $COMPOSE_CMD${NC}"
 
-# Update Docker socket path for rootless
-if [ "$RUNTIME_MODE" = "rootless" ] && [ "$CONTAINER_RUNTIME" = "docker" ]; then
-    DOCKER_SOCK="/run/user/$(id -u)/docker.sock"
-    sed -i.bak "s|^#DOCKER_SOCK=.*|DOCKER_SOCK=$DOCKER_SOCK|" .env
-    sed -i.bak "s|^DOCKER_SOCK=.*|DOCKER_SOCK=$DOCKER_SOCK|" .env
-    echo "${BLUE}Docker socket set to: $DOCKER_SOCK${NC}"
+# Keep the selected local API socket active for the autoscaler. The exact path
+# was resolved and identity-checked before any .env runtime fields were changed.
+if [ "$CONTAINER_RUNTIME" = "podman" ]; then
+    if [ "$RUNTIME_MODE" = "rootless" ] && command -v systemctl &>/dev/null; then
+        systemctl --user enable --now podman.socket 2>/dev/null || true
+    elif [ "$EUID" -eq 0 ] && command -v systemctl &>/dev/null; then
+        systemctl enable --now podman.socket 2>/dev/null || true
+    elif command -v sudo &>/dev/null && command -v systemctl &>/dev/null && \
+         { [ ! -S "$DOCKER_SOCK" ] || ! systemctl is-enabled --quiet podman.socket; }; then
+        echo -n "Enable and start the rootful Podman API socket with sudo? [Y/n]: "
+        read -r start_podman_socket
+        if [[ -z "$start_podman_socket" || "$start_podman_socket" =~ ^[Yy] ]]; then
+            sudo systemctl enable --now podman.socket || true
+        fi
+    fi
+    if [ ! -S "$DOCKER_SOCK" ]; then
+        echo "${RED}Podman API socket is unavailable at $DOCKER_SOCK.${NC}"
+        echo "Enable podman.socket, then rerun the wizard. Never make the socket world-writable."
+        exit 1
+    fi
+    if command -v systemctl &>/dev/null; then
+        if [ "$RUNTIME_MODE" = "rootless" ] && ! systemctl --user is-enabled --quiet podman.socket; then
+            echo "${RED}Rootless podman.socket is active but not enabled for reboot.${NC}"
+            exit 1
+        elif [ "$RUNTIME_MODE" = "rootful" ] && ! systemctl is-enabled --quiet podman.socket; then
+            echo "${RED}Rootful podman.socket is active but not enabled for reboot.${NC}"
+            exit 1
+        fi
+    fi
 fi
+set_env_value "CONTAINER_RUNTIME" "$CONTAINER_RUNTIME"
+set_env_value "CONTAINER_RUNTIME_MODE" "$RUNTIME_MODE"
+set_env_value "DOCKER_SOCK" "$DOCKER_SOCK"
+echo "${BLUE}Container API socket set to: $DOCKER_SOCK${NC}"
 
 # ============================================================
-# Step 10: Create External Network
+# Step 10: n8n Instance AI Sandbox
 # ============================================================
 
 echo ""
-echo "${BLUE}Step 10: Docker Network${NC}"
+echo "${BLUE}Step 10: n8n Instance AI Sandbox${NC}"
+echo "---------------------------------"
+echo "Choose where Instance AI should execute code:"
+echo "  1. Self-hosted n8n Sandbox (automatic services + bundled SearXNG)"
+echo "  2. Daytona (managed sandbox provider)"
+echo "  3. Disable Instance AI"
+
+CURRENT_AI_ENABLED=$(get_existing_value "ENABLE_AI_ASSISTANT" "false")
+CURRENT_AI_PROVIDER=$(get_existing_value "N8N_INSTANCE_AI_SANDBOX_PROVIDER" "n8n-sandbox")
+PREVIOUS_AI_ENABLED="$CURRENT_AI_ENABLED"
+PREVIOUS_AI_PROVIDER="$CURRENT_AI_PROVIDER"
+if [ "$CURRENT_AI_ENABLED" != "true" ]; then
+    AI_DEFAULT=3
+elif [ "$CURRENT_AI_PROVIDER" = "daytona" ]; then
+    AI_DEFAULT=2
+else
+    AI_DEFAULT=1
+fi
+
+AI_SELECTION="Disabled"
+while true; do
+    echo -n "Sandbox option [1-3, default $AI_DEFAULT]: "
+    read -r ai_choice
+    ai_choice=${ai_choice:-$AI_DEFAULT}
+
+    case "$ai_choice" in
+        1)
+            if [ "$CONTAINER_RUNTIME" != "docker" ] || [ "$RUNTIME_MODE" != "rootful" ]; then
+                echo "${RED}The self-hosted sandbox requires rootful Docker 24 or newer.${NC}"
+                echo "${YELLOW}Podman and rootless Docker are not supported by the upstream sandbox service.${NC}"
+                echo "Choose Daytona or disable the sandbox, or rerun the wizard with rootful Docker."
+                continue
+            fi
+
+            if ! docker compose version &>/dev/null; then
+                echo "${RED}The self-hosted sandbox requires the Docker Compose v2 plugin ('docker compose').${NC}"
+                echo "Install Compose v2, or choose Daytona or disabled."
+                continue
+            fi
+
+            SANDBOX_ARCH=$(docker info --format '{{.Architecture}}' 2>/dev/null || uname -m)
+            case "$SANDBOX_ARCH" in
+                x86_64|amd64|aarch64|arm64) ;;
+                *)
+                    echo "${RED}No pinned sandbox images are published for architecture '$SANDBOX_ARCH'.${NC}"
+                    echo "The self-hosted option currently supports amd64 and arm64 hosts."
+                    continue
+                    ;;
+            esac
+
+            DOCKER_SERVER_VERSION=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "")
+            DOCKER_SERVER_MAJOR=${DOCKER_SERVER_VERSION%%.*}
+            if ! [[ "$DOCKER_SERVER_MAJOR" =~ ^[0-9]+$ ]]; then
+                echo "${RED}Could not determine the Docker server version; Docker 24 or newer is required.${NC}"
+                continue
+            fi
+            if [ "$DOCKER_SERVER_MAJOR" -lt 24 ]; then
+                echo "${RED}Docker $DOCKER_SERVER_VERSION is too old; the self-hosted sandbox requires Docker 24 or newer.${NC}"
+                continue
+            fi
+
+            SYSBOX_AVAILABLE=false
+            if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q 'sysbox-runc'; then
+                SYSBOX_AVAILABLE=true
+            fi
+
+            if [ "$SYSBOX_AVAILABLE" = "true" ]; then
+                if [ "$(uname -s)" != "Linux" ]; then
+                    echo "${RED}Sysbox production isolation is supported only on Linux.${NC}"
+                    continue
+                fi
+                KERNEL_RELEASE=$(docker info --format '{{.KernelVersion}}' 2>/dev/null || uname -r)
+                KERNEL_MAJOR=${KERNEL_RELEASE%%.*}
+                KERNEL_REMAINDER=${KERNEL_RELEASE#*.}
+                KERNEL_MINOR=${KERNEL_REMAINDER%%.*}
+                if ! [[ "$KERNEL_MAJOR" =~ ^[0-9]+$ && "$KERNEL_MINOR" =~ ^[0-9]+$ ]] || \
+                   [ "$KERNEL_MAJOR" -lt 5 ] || { [ "$KERNEL_MAJOR" -eq 5 ] && [ "$KERNEL_MINOR" -le 19 ]; }; then
+                    echo "${RED}Sysbox requires a Linux kernel newer than 5.19; detected $KERNEL_RELEASE.${NC}"
+                    continue
+                fi
+                set_env_value "N8N_SANDBOX_ISOLATION" "sysbox"
+                echo "${GREEN}Sysbox detected; using production isolation.${NC}"
+                AI_SELECTION="Self-hosted n8n Sandbox (Sysbox)"
+            else
+                echo "${YELLOW}Sysbox was not detected.${NC}"
+                if [ "$(uname -s)" = "Linux" ]; then
+                    echo "Production Linux hosts should install sysbox-runc first:"
+                    echo "  https://github.com/n8n-io/n8n-sandbox-service/blob/main/docs/quickstart-linux.md"
+                fi
+                echo "Privileged Docker-in-Docker is host-root-equivalent and is intended only for local/test use."
+                echo -n "Use the privileged local/test fallback? [y/N]: "
+                read -r privileged_choice
+                if [[ ! "$privileged_choice" =~ ^[Yy] ]]; then
+                    echo "${BLUE}Self-hosted setup paused; choose another option or install Sysbox and rerun.${NC}"
+                    continue
+                fi
+                set_env_value "N8N_SANDBOX_ISOLATION" "privileged"
+                AI_SELECTION="Self-hosted n8n Sandbox (privileged local/test)"
+            fi
+
+            set_env_value "ENABLE_AI_ASSISTANT" "true"
+            ensure_csv_value "N8N_ENABLED_MODULES" "instance-ai"
+            remove_csv_value "N8N_DISABLED_MODULES" "instance-ai"
+            set_env_value "N8N_INSTANCE_AI_SANDBOX_ENABLED" "true"
+            set_env_value "N8N_INSTANCE_AI_SANDBOX_PROVIDER" "n8n-sandbox"
+            set_env_value "N8N_SANDBOX_SERVICE_URL" "http://sandbox-api:8080"
+            set_env_value "N8N_INSTANCE_AI_SEARXNG_URL" "http://searxng:8080"
+
+            ensure_client_key_in_list "SANDBOX_API_KEYS" "N8N_SANDBOX_SERVICE_API_KEY"
+            ensure_secret_pair "SANDBOX_API_RUNNER_REGISTRATION_TOKEN" "SANDBOX_RUNNER_REGISTRATION_TOKEN"
+            ensure_client_key_in_list "SANDBOX_RUNNER_API_KEYS" "SANDBOX_API_RUNNER_API_KEY"
+            ensure_secret "SEARXNG_SECRET"
+
+            ensure_default_value "N8N_SANDBOX_SERVICE_VERSION" "1.1.1"
+            ensure_default_value "N8N_SANDBOX_IMAGE_VERSION" "1.1.0"
+            ensure_default_value "SEARXNG_VERSION" "2026.8.28-a30b2d474"
+
+            CPU_COUNT=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0)
+            MEMORY_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+            if { [ "$CPU_COUNT" -gt 0 ] && [ "$CPU_COUNT" -lt 2 ]; } || { [ "$MEMORY_KB" -gt 0 ] && [ "$MEMORY_KB" -lt 4194304 ]; }; then
+                echo "${YELLOW}Warning: n8n recommends at least 2 CPUs and 4 GB RAM for the sandbox stack.${NC}"
+            fi
+            echo "${GREEN}Self-hosted sandbox secrets and services configured.${NC}"
+            break
+            ;;
+        2)
+            daytona_key=""
+            CURRENT_DAYTONA_URL=$(get_existing_value "DAYTONA_API_URL" "https://app.daytona.io/api")
+            echo -n "Daytona API URL [$CURRENT_DAYTONA_URL]: "
+            read -r daytona_url
+            daytona_url=${daytona_url:-$CURRENT_DAYTONA_URL}
+
+            CURRENT_DAYTONA_KEY=$(get_existing_value "DAYTONA_API_KEY" "")
+            if [ -n "$CURRENT_DAYTONA_KEY" ] && [[ ! "$CURRENT_DAYTONA_KEY" =~ ^YOUR ]]; then
+                echo -n "Keep the existing Daytona API key? [Y/n]: "
+                read -r keep_daytona_key
+                if [[ -z "$keep_daytona_key" || "$keep_daytona_key" =~ ^[Yy] ]]; then
+                    daytona_key="$CURRENT_DAYTONA_KEY"
+                fi
+            fi
+            while [ -z "$daytona_key" ]; do
+                echo -n "Daytona API key: "
+                read -rs daytona_key
+                echo ""
+                [ -z "$daytona_key" ] && echo "${RED}A Daytona API key is required for this option.${NC}"
+            done
+
+            set_env_value "ENABLE_AI_ASSISTANT" "true"
+            ensure_csv_value "N8N_ENABLED_MODULES" "instance-ai"
+            remove_csv_value "N8N_DISABLED_MODULES" "instance-ai"
+            set_env_value "N8N_INSTANCE_AI_SANDBOX_ENABLED" "true"
+            set_env_value "N8N_INSTANCE_AI_SANDBOX_PROVIDER" "daytona"
+            set_env_value "N8N_INSTANCE_AI_SEARXNG_URL" ""
+            set_env_value "DAYTONA_API_URL" "$daytona_url"
+            set_env_value "DAYTONA_API_KEY" "$daytona_key"
+            [ -z "$(get_existing_value "N8N_INSTANCE_AI_SANDBOX_IMAGE" "")" ] && set_env_value "N8N_INSTANCE_AI_SANDBOX_IMAGE" "daytonaio/sandbox:0.5.3-slim"
+            AI_SELECTION="Daytona"
+            echo "${GREEN}Daytona sandbox configured.${NC}"
+            break
+            ;;
+        3)
+            set_env_value "ENABLE_AI_ASSISTANT" "false"
+            set_env_value "N8N_INSTANCE_AI_SANDBOX_ENABLED" "false"
+            remove_csv_value "N8N_ENABLED_MODULES" "instance-ai"
+            ensure_csv_value "N8N_DISABLED_MODULES" "instance-ai"
+            AI_SELECTION="Disabled"
+            echo "${BLUE}Instance AI disabled through N8N_DISABLED_MODULES.${NC}"
+            break
+            ;;
+        *)
+            echo "${RED}Invalid choice${NC}"
+            ;;
+    esac
+done
+
+if [ "$(get_existing_value "ENABLE_AI_ASSISTANT" "false")" = "true" ]; then
+    SELECTED_AI_PROVIDER=$(get_existing_value "N8N_INSTANCE_AI_SANDBOX_PROVIDER" "")
+    if [ "$PREVIOUS_AI_ENABLED" = "true" ] && [ "$PREVIOUS_AI_PROVIDER" != "$SELECTED_AI_PROVIDER" ]; then
+        echo "${YELLOW}Provider changed from $PREVIOUS_AI_PROVIDER to $SELECTED_AI_PROVIDER.${NC}"
+        echo "After startup, verify the selected provider in AI Assistant settings and remove the old saved sandbox connection if it is still selected."
+    fi
+    echo "${YELLOW}On an existing n8n database, the saved AI Settings on/off state overrides the environment default.${NC}"
+    echo "After startup, verify that AI Assistant and Sandbox are enabled and that the selected provider matches $SELECTED_AI_PROVIDER."
+    echo "Disconnect any mismatched saved sandbox connection. The wizard does not directly edit n8n's database-backed settings."
+fi
+
+if [ "$(get_existing_value "ENABLE_AI_ASSISTANT" "false")" = "true" ]; then
+    CURRENT_MODEL_KEY=$(get_existing_value "N8N_INSTANCE_AI_MODEL_API_KEY" "")
+    CURRENT_MODEL_URL=$(get_existing_value "N8N_INSTANCE_AI_MODEL_URL" "")
+    if [ -n "$CURRENT_MODEL_KEY" ] || [ -n "$CURRENT_MODEL_URL" ]; then
+        CURRENT_MODEL=$(get_existing_value "N8N_INSTANCE_AI_MODEL" "")
+        if [ -z "$CURRENT_MODEL" ]; then
+            CURRENT_MODEL="anthropic/claude-opus-4-8"
+            echo "A model API key/URL exists but no model name is configured."
+            echo -n "Model in provider/model format [$CURRENT_MODEL]: "
+            read -r model_name
+            model_name=${model_name:-$CURRENT_MODEL}
+            set_env_value "N8N_INSTANCE_AI_MODEL" "$model_name"
+        fi
+        echo "${GREEN}Existing Instance AI model credentials preserved.${NC}"
+    else
+        echo "A model credential is also required before the assistant can answer."
+        echo -n "Configure a model API key now? [y/N]: "
+        read -r configure_model
+        if [[ "$configure_model" =~ ^[Yy] ]]; then
+            CURRENT_MODEL=$(get_existing_value "N8N_INSTANCE_AI_MODEL" "anthropic/claude-opus-4-8")
+            echo -n "Model in provider/model format [$CURRENT_MODEL]: "
+            read -r model_name
+            model_name=${model_name:-$CURRENT_MODEL}
+            echo -n "Model API key (leave empty only for a keyless local endpoint): "
+            read -rs model_key
+            echo ""
+            echo -n "OpenAI-compatible base URL (optional): "
+            read -r model_url
+            set_env_value "N8N_INSTANCE_AI_MODEL" "$model_name"
+            set_env_value "N8N_INSTANCE_AI_MODEL_API_KEY" "$model_key"
+            set_env_value "N8N_INSTANCE_AI_MODEL_URL" "$model_url"
+            if [ -n "$model_key" ] || [ -n "$model_url" ]; then
+                echo "${GREEN}Model configuration saved.${NC}"
+            else
+                echo "${YELLOW}No key or local endpoint was entered; configure the model later.${NC}"
+            fi
+        else
+            unset_env_value "N8N_INSTANCE_AI_MODEL"
+            unset_env_value "N8N_INSTANCE_AI_MODEL_API_KEY"
+            unset_env_value "N8N_INSTANCE_AI_MODEL_URL"
+            echo "${YELLOW}Configure the model later in n8n's AI settings or in .env.${NC}"
+        fi
+    fi
+fi
+
+sync_compose_file_env "$CONTAINER_RUNTIME"
+chmod 600 .env
+echo "${BLUE}Compose stack: $(get_existing_value "COMPOSE_FILE" "docker-compose.yml")${NC}"
+
+SYSTEMD_REFRESH_REQUIRED=false
+for installed_unit in "/etc/systemd/system/n8n-autoscaling.service" "${HOME}/.config/systemd/user/n8n-autoscaling.service"; do
+    if [ -f "$installed_unit" ] && \
+       { ! grep -q '/compose-stack.sh up$' "$installed_unit" 2>/dev/null || \
+         ! grep -q '^After=.*docker\.service.*podman\.socket' "$installed_unit" 2>/dev/null; }; then
+        SYSTEMD_REFRESH_REQUIRED=true
+        echo "${YELLOW}Existing systemd unit needs the current runtime/provider and engine-ordering support: $installed_unit${NC}"
+    fi
+done
+if [ "$RUNTIME_MODE" = "rootless" ] && [ -f "/etc/systemd/system/n8n-autoscaling.service" ]; then
+    SYSTEMD_REFRESH_REQUIRED=true
+    echo "${YELLOW}Rootless runtimes need a user service; regenerate systemd without sudo.${NC}"
+fi
+if [ "$RUNTIME_MODE" = "rootful" ] && [ -f "${HOME}/.config/systemd/user/n8n-autoscaling.service" ]; then
+    SYSTEMD_REFRESH_REQUIRED=true
+    echo "${YELLOW}Rootful runtimes need a system service for clean engine shutdown ordering; regenerate systemd.${NC}"
+fi
+if [ "$SYSTEMD_REFRESH_REQUIRED" = "true" ]; then
+    echo "Run ./generate-systemd.sh after this wizard to make future boots follow the selected provider."
+fi
+
+# ============================================================
+# Step 11: Create External Network
+# ============================================================
+
+echo ""
+echo "${BLUE}Step 11: Docker Network${NC}"
 echo "-----------------------"
 
 echo "The 'shark' external network is used for inter-service communication."
@@ -845,11 +1605,11 @@ elif [ "$CONTAINER_RUNTIME" = "podman" ]; then
 fi
 
 # ============================================================
-# Step 11: Start Services
+# Step 12: Start Services
 # ============================================================
 
 echo ""
-echo "${BLUE}Step 11: Start Services${NC}"
+echo "${BLUE}Step 12: Start Services${NC}"
 echo "-----------------------"
 
 echo -n "Start all services now? [Y/n]: "
@@ -858,7 +1618,7 @@ if [[ -z "$r" || "$r" =~ ^[Yy] ]]; then
     COMPOSE_FILES=$(build_compose_files "$CONTAINER_RUNTIME")
 
     echo "${BLUE}Starting with: $COMPOSE_CMD $COMPOSE_FILES${NC}"
-    $COMPOSE_CMD $COMPOSE_FILES up -d
+    $COMPOSE_CMD $COMPOSE_FILES up -d --build --remove-orphans
 
     echo "${BLUE}Waiting for services to start (30s)...${NC}"
     sleep 30
@@ -882,10 +1642,28 @@ if [[ -z "$r" || "$r" =~ ^[Yy] ]]; then
         echo "  ${RED}PostgreSQL: FAILED${NC}"
     fi
 
+    # Check the local sandbox API and runner when selected. The certificate
+    # bootstrap service exits successfully by design and is not a long-running
+    # health target.
+    if [ "$(get_existing_value "ENABLE_AI_ASSISTANT" "false")" = "true" ] && \
+       [ "$(get_existing_value "N8N_INSTANCE_AI_SANDBOX_PROVIDER" "")" = "n8n-sandbox" ]; then
+        if $COMPOSE_CMD $COMPOSE_FILES exec -T sandbox-api wget -q -O /dev/null http://localhost:8080/healthz 2>/dev/null; then
+            echo "  ${GREEN}Sandbox API: OK${NC}"
+        else
+            echo "  ${RED}Sandbox API: FAILED${NC}"
+        fi
+        if $COMPOSE_CMD $COMPOSE_FILES exec -T sandbox-runner-1 wget -q -O /dev/null http://localhost:8080/readyz 2>/dev/null; then
+            echo "  ${GREEN}Sandbox runner runtime: OK${NC}"
+            echo "    Verify runner registration in sandbox-api/sandbox-runner-1 logs."
+        else
+            echo "  ${RED}Sandbox runner runtime: FAILED${NC}"
+        fi
+    fi
+
     # Show running containers
     echo ""
     RUNNING=$($COMPOSE_CMD $COMPOSE_FILES ps --services --filter "status=running" 2>/dev/null | wc -l | tr -d ' ')
-    TOTAL=$($COMPOSE_CMD $COMPOSE_FILES ps --services 2>/dev/null | wc -l | tr -d ' ')
+    TOTAL=$($COMPOSE_CMD $COMPOSE_FILES config --services 2>/dev/null | grep -v '^sandbox-certs$' | wc -l | tr -d ' ')
     echo "${BLUE}Running containers: $RUNNING/$TOTAL${NC}"
 
     N8N_HOST_FINAL=$(get_existing_value "N8N_HOST" "localhost")
@@ -895,7 +1673,7 @@ if [[ -z "$r" || "$r" =~ ^[Yy] ]]; then
     echo "  Local:    http://localhost:5678"
 else
     echo "${BLUE}Services not started. Start manually with:${NC}"
-    echo "  $COMPOSE_CMD up -d"
+    echo "  $COMPOSE_CMD up -d --build --remove-orphans"
 fi
 
 # ============================================================
@@ -905,11 +1683,8 @@ fi
 echo ""
 
 # Add setup completion flag (idempotent)
-if ! grep -q "^SETUP_COMPLETED=true" .env 2>/dev/null; then
-    echo "" >> .env
-    echo "# Setup completion flag" >> .env
-    echo "SETUP_COMPLETED=true" >> .env
-fi
+set_env_value "SETUP_COMPLETED" "true"
+chmod 600 .env
 
 # Clean up sed backup files
 rm -f .env.bak
@@ -921,6 +1696,17 @@ echo "  Runtime:   $CONTAINER_RUNTIME ($RUNTIME_MODE)"
 echo "  n8n URL:   https://$(get_existing_value 'N8N_HOST' 'n8n.domain.com')"
 echo "  Webhook:   https://$(get_existing_value 'N8N_WEBHOOK' 'webhook.domain.com')"
 echo "  Workers:   $(get_existing_value 'MIN_REPLICAS' '1')-$(get_existing_value 'MAX_REPLICAS' '5')"
+echo "  AI Sandbox: $AI_SELECTION"
+if [ "$SYSTEMD_REFRESH_REQUIRED" = "true" ]; then
+    echo "  systemd:    Regenerate with ./generate-systemd.sh"
+fi
+if [ "$(get_existing_value 'ENABLE_AI_ASSISTANT' 'false')" = "true" ]; then
+    if [ -n "$(get_existing_value 'N8N_INSTANCE_AI_MODEL_API_KEY' '')" ] || [ -n "$(get_existing_value 'N8N_INSTANCE_AI_MODEL_URL' '')" ]; then
+        echo "  AI Model:   Configured"
+    else
+        echo "  AI Model:   Needs configuration in n8n AI settings or .env"
+    fi
+fi
 FINAL_PROFILES=$(get_existing_value 'COMPOSE_PROFILES' '')
 if [[ "$FINAL_PROFILES" == *"backup"* ]]; then
     echo "  Backups:   Enabled ($(get_existing_value 'BACKUP_SCHEDULE' '0 2 * * *'))"

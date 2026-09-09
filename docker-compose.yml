@@ -23,6 +23,8 @@ x-n8n: &service-n8n
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      N8N_VERSION: ${N8N_VERSION:-2.36.8}
   user: root:root
   restart: unless-stopped
   logging: *default-logging
@@ -77,6 +79,10 @@ x-n8n: &service-n8n
     - NODES_EXCLUDE=${NODES_EXCLUDE:-[]}
     - N8N_RESTRICT_FILE_ACCESS_TO=${N8N_RESTRICT_FILE_ACCESS_TO:-/root/.n8n-files}
     - N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE=${N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE:-true}
+    # Keeps a wizard 'disabled' selection authoritative over persisted AI settings.
+    # Missing on a legacy .env must be safe. The wizard writes an explicit
+    # empty value only when Instance AI is deliberately enabled.
+    - N8N_DISABLED_MODULES=${N8N_DISABLED_MODULES-instance-ai}
     # Task Runner config (n8n 2.0 external mode)
     - N8N_RUNNERS_MODE=external
     - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
@@ -89,6 +95,8 @@ x-task-runner: &service-task-runner
   build:
     context: .
     dockerfile: Dockerfile.runner
+    args:
+      N8N_VERSION: ${N8N_VERSION:-2.36.8}
   restart: unless-stopped
   logging: *default-logging
   networks:
