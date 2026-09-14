@@ -7,6 +7,12 @@ services:
   n8n:
     build:
       dockerfile: Dockerfile.build
+      args:
+        # Pinned by maintenance 2026-09-08. Upstream b45e5ad moved both Dockerfiles to
+        # :${N8N_VERSION}. 2.38.x is NOT usable: n8nio/runners:2.38.x ships Node 26, which
+        # unbundled corepack, and upstream Dockerfile.runner still calls corepack to pin
+        # pnpm -- the runner build fails outright. 2.36.8 is upstream's validated pin.
+        N8N_VERSION: "2.36.8"
     env_file: .env
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
@@ -24,6 +30,12 @@ services:
   n8n-webhook:
     build:
       dockerfile: Dockerfile.build
+      args:
+        # Pinned by maintenance 2026-09-08. Upstream b45e5ad moved both Dockerfiles to
+        # :${N8N_VERSION}. 2.38.x is NOT usable: n8nio/runners:2.38.x ships Node 26, which
+        # unbundled corepack, and upstream Dockerfile.runner still calls corepack to pin
+        # pnpm -- the runner build fails outright. 2.36.8 is upstream's validated pin.
+        N8N_VERSION: "2.36.8"
     env_file: .env
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
@@ -37,6 +49,12 @@ services:
   n8n-worker:
     build:
       dockerfile: Dockerfile.build
+      args:
+        # Pinned by maintenance 2026-09-08. Upstream b45e5ad moved both Dockerfiles to
+        # :${N8N_VERSION}. 2.38.x is NOT usable: n8nio/runners:2.38.x ships Node 26, which
+        # unbundled corepack, and upstream Dockerfile.runner still calls corepack to pin
+        # pnpm -- the runner build fails outright. 2.36.8 is upstream's validated pin.
+        N8N_VERSION: "2.36.8"
     env_file: .env
     # HO-N8N-ENVGAP 2026-08-01: N8N_BLOCK_ENV_ACCESS_IN_NODE=false REMOVED here.
     # Workers keep $env BLOCKED (Hybrid posture, admin/DECISIONS.md D12). Leaving it
@@ -55,3 +73,5 @@ services:
   n8n-worker-runner:
     build:
       dockerfile: Dockerfile.runner.build
+      args:
+        N8N_VERSION: "2.36.8"
