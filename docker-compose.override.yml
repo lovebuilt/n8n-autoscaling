@@ -8,11 +8,15 @@ services:
     build:
       dockerfile: Dockerfile.build
       args:
-        # Pinned by maintenance 2026-09-08. Upstream b45e5ad moved both Dockerfiles to
-        # :${N8N_VERSION}. 2.38.x is NOT usable: n8nio/runners:2.38.x ships Node 26, which
-        # unbundled corepack, and upstream Dockerfile.runner still calls corepack to pin
-        # pnpm -- the runner build fails outright. 2.36.8 is upstream's validated pin.
-        N8N_VERSION: "2.36.8"
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.39.8"
     env_file: .env
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
@@ -31,11 +35,15 @@ services:
     build:
       dockerfile: Dockerfile.build
       args:
-        # Pinned by maintenance 2026-09-08. Upstream b45e5ad moved both Dockerfiles to
-        # :${N8N_VERSION}. 2.38.x is NOT usable: n8nio/runners:2.38.x ships Node 26, which
-        # unbundled corepack, and upstream Dockerfile.runner still calls corepack to pin
-        # pnpm -- the runner build fails outright. 2.36.8 is upstream's validated pin.
-        N8N_VERSION: "2.36.8"
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.39.8"
     env_file: .env
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
@@ -50,11 +58,15 @@ services:
     build:
       dockerfile: Dockerfile.build
       args:
-        # Pinned by maintenance 2026-09-08. Upstream b45e5ad moved both Dockerfiles to
-        # :${N8N_VERSION}. 2.38.x is NOT usable: n8nio/runners:2.38.x ships Node 26, which
-        # unbundled corepack, and upstream Dockerfile.runner still calls corepack to pin
-        # pnpm -- the runner build fails outright. 2.36.8 is upstream's validated pin.
-        N8N_VERSION: "2.36.8"
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.39.8"
     env_file: .env
     # HO-N8N-ENVGAP 2026-08-01: N8N_BLOCK_ENV_ACCESS_IN_NODE=false REMOVED here.
     # Workers keep $env BLOCKED (Hybrid posture, admin/DECISIONS.md D12). Leaving it
@@ -74,4 +86,12 @@ services:
     build:
       dockerfile: Dockerfile.runner.build
       args:
-        N8N_VERSION: "2.36.8"
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.39.8"

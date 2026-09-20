@@ -171,6 +171,72 @@ def inject_npm(content, packages):
     return '\n'.join(result)
 
 
+def strip_corepack(content):
+    """Remove upstream's corepack pnpm@10 pin (required for Node 26 bases).
+
+    n8nio/runners:>=2.38 ships Node 26, which UNBUNDLED corepack, so upstream's
+    two corepack lines fail outright and the runner image cannot build at all.
+    The base image already provides a usable pnpm, so drop the `prepare` line and
+    call `pnpm add` directly -- keeping the literal `pnpm add` so inject_npm()
+    still injects our packages and --allow-build flags.
+
+    Asserted, not best-effort: if upstream changes these lines the build stops
+    here rather than silently shipping an unpatched Dockerfile.
+    """
+    cp = '/usr/local/bin/node /usr/local/lib/node_modules/corepack/dist/corepack.js'
+    prepare = 'RUN ' + cp + ' prepare pnpm@10 --activate\n'
+    if prepare not in content or (cp + ' pnpm add') not in content:
+        print('    FATAL: expected corepack lines absent from upstream Dockerfile.runner')
+        sys.exit(1)
+    content = content.replace(prepare, '')
+    content = content.replace(cp + ' pnpm add', 'pnpm add')
+    return content
+
+
+def inject_node26_compat(content, externals):
+    """Node 26 ESM/CJS shim for yargs, plus a BUILD-TIME gate on allowlisted externals.
+
+    WHY (diagnosed live 2026-09-20, n8n-workshop DECISIONS W67):
+      Node 26 resolves an EXTENSIONLESS file inside a package declaring
+      "type": "module" as ESM. yargs 17.x's exports["./yargs"].require points at
+      exactly such a file (./yargs) whose body is CommonJS, so loading it raises
+      `ReferenceError: require is not defined in ES module scope` at yargs:3.
+      It is reached because @puppeteer/browsers' MAIN entry unconditionally
+      requires ./CLI.js -> 'yargs/yargs', and the task runner eagerly loads every
+      NODE_FUNCTION_ALLOW_EXTERNAL module at startup. Net effect on 2.39.8: the JS
+      runner crash-looped, every Code node failed, and the container still
+      reported `healthy` (its healthcheck watches the Go launcher, not the JS
+      child). Fine on Node 24 (2.36.8) -- this is a Node 26 behaviour change.
+
+    The shim fix renames the file to .cjs (unambiguously CommonJS regardless of
+    "type") and repoints the export at it. Behaviour-preserving: same file body.
+
+    The GATE is the durable half: every allowlisted external must load at BUILD
+    time, so this entire failure class fails the build instead of production. The
+    list passed in is the one generate_task_runners() actually wrote, so the gate
+    and the runtime allowlist cannot drift apart.
+    """
+    anchor = 'RUN chmod 644 /etc/n8n-task-runners.json'
+    if content.count(anchor) != 1:
+        print('    FATAL: node26-compat anchor found %dx (need exactly 1)' % content.count(anchor))
+        sys.exit(1)
+    mods = ' '.join(externals)
+    block = (
+        '# === CUSTOM (build.py): Node 26 ESM/CJS compat + external-module build gate ===\n'
+        'COPY custom/node26-compat.js /tmp/node26-compat.js\n'
+        'RUN node /tmp/node26-compat.js && rm /tmp/node26-compat.js\n'
+        '\n'
+        '# Build GATE: every allowlisted external must load, or the build fails HERE\n'
+        '# instead of crash-looping production. List mirrors NODE_FUNCTION_ALLOW_EXTERNAL.\n'
+        'RUN cd /opt/runners/task-runner-javascript && \\\n'
+        '    for m in ' + mods + '; do \\\n'
+        '      node -e "require(\'$m\')" || { echo "EXTERNAL-GATE FAIL: $m"; exit 1; }; \\\n'
+        '    done && echo "EXTERNAL-GATE: all allowlisted externals load OK"\n'
+        '\n'
+    )
+    return content.replace(anchor, block + anchor, 1)
+
+
 def inject_pip(content, packages):
     """Add custom pip packages to the uv pip install block."""
     if not packages:
@@ -396,22 +462,36 @@ def main():
     (ROOT_DIR / 'Dockerfile.build').write_text(df)
     print("    ✓ Written")
 
+    # --- n8n-task-runners.build.json ---
+    # Generated FIRST on purpose: the runner Dockerfile's build gate reuses the
+    # very allowlist written here, so gate and runtime cannot drift apart.
+    print("  Generating n8n-task-runners.build.json ...")
+    tr = generate_task_runners(config)
+    (ROOT_DIR / 'n8n-task-runners.build.json').write_text(tr)
+    print("    ✓ Written")
+
+    externals = []
+    for _r in json.loads(tr).get('task-runners', []):
+        if _r.get('runner-type') == 'javascript':
+            externals = [x for x in _r.get('env-overrides', {}).get(
+                'NODE_FUNCTION_ALLOW_EXTERNAL', '').split(',') if x]
+    if not externals:
+        print('    FATAL: no NODE_FUNCTION_ALLOW_EXTERNAL for the javascript runner')
+        sys.exit(1)
+    print(f"    Build gate will verify {len(externals)} external modules")
+
     # --- Dockerfile.runner.build ---
     print("  Generating Dockerfile.runner.build ...")
     rf, src = get_upstream_file('Dockerfile.runner')
     print(f"    Source: {src}")
+    rf = strip_corepack(rf)
     rf = inject_apk(rf, runner_cfg['apk_packages'])
     rf = inject_copies(rf, runner_cfg['share_copies'], runner_cfg['bin_copies'])
     rf = inject_npm(rf, runner_cfg['npm_packages'])
     rf = inject_pip(rf, runner_cfg['pip_packages'])
     rf = fix_runner_config_path(rf)
+    rf = inject_node26_compat(rf, externals)
     (ROOT_DIR / 'Dockerfile.runner.build').write_text(rf)
-    print("    ✓ Written")
-
-    # --- n8n-task-runners.build.json ---
-    print("  Generating n8n-task-runners.build.json ...")
-    tr = generate_task_runners(config)
-    (ROOT_DIR / 'n8n-task-runners.build.json').write_text(tr)
     print("    ✓ Written")
 
     print()

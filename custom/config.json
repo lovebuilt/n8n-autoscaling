@@ -1,6 +1,6 @@
 {
     "_comment": "YOUR customizations. build.py reads this and injects into upstream Dockerfiles.",
-    "_updated": "2026-07-20",
+    "_updated": "2026-09-20",
     "main": {
         "apk_packages": [
             "imagemagick",
@@ -49,7 +49,7 @@
             "yt-dlp[default]",
             "curl_cffi"
         ],
-        "_pip_globals_comment": "HO-TRANSCRIBE-PROCESSOR 2026-07-24: system pip in the FINAL stage installs the yt-dlp NIGHTLY channel (--pre yt-dlp[default], pulls curl_cffi for impersonation) over the stale apk yt-dlp (2026.03.17). Nightly is required for max provider coverage — the latest STABLE (2026.07.04) has Vimeo extractor rot (OAuth 401); nightly 2026.07.23+ fixes it and keeps YouTube byte-identical (proven). Prebuilt musllinux_1_2_x86_64 wheels, no build toolchain. yt-dlp script -> /usr/bin/yt-dlp, overwriting the apk one. Kept fresh between rebuilds by custom/ytdlp-refresh.sh (host cron, parity-guarded)."
+        "_pip_globals_comment": "HO-TRANSCRIBE-PROCESSOR 2026-07-24: system pip in the FINAL stage installs the yt-dlp NIGHTLY channel (--pre yt-dlp[default], pulls curl_cffi for impersonation) over the stale apk yt-dlp (2026.03.17). Nightly is required for max provider coverage \u2014 the latest STABLE (2026.07.04) has Vimeo extractor rot (OAuth 401); nightly 2026.07.23+ fixes it and keeps YouTube byte-identical (proven). Prebuilt musllinux_1_2_x86_64 wheels, no build toolchain. yt-dlp script -> /usr/bin/yt-dlp, overwriting the apk one. Kept fresh between rebuilds by custom/ytdlp-refresh.sh (host cron, parity-guarded)."
     },
     "runner": {
         "apk_packages": [
@@ -77,7 +77,8 @@
             "/usr/bin/tesseract"
         ],
         "npm_packages": [
-            "sharp"
+            "sharp",
+            "zod@3.25.76"
         ],
         "pip_packages": [
             "pdf2image",
@@ -89,7 +90,8 @@
         "py_allowlist_additions": [
             "pdf2image",
             "PyPDF2"
-        ]
+        ],
+        "_npm_packages_comment": "zod@3.25.76 is PINNED deliberately (2026-09-20). Adding packages into the runner's own node_modules re-resolves n8n's dependency tree: our pnpm add drags in zod 3.23.8 and pnpm hoists it over the 3.25.76 that n8n 2.39.x ships. 2.39.x's runner imports zod/v4, a subpath 3.23.8 does not export -> ERR_PACKAGE_PATH_NOT_EXPORTED -> JS runner crash loop -> every Code node fails. Re-check this pin against the base image's own zod on each n8n major."
     },
     "compose_overrides": {
         "_comment": "Things to ADD to upstream's docker-compose.yml via override file",
