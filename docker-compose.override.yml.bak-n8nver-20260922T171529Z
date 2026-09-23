@@ -16,7 +16,7 @@ services:
         #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
         # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
         # cannot load, so this class cannot reach production again. See DECISIONS W67.
-        N8N_VERSION: "2.40.5"
+        N8N_VERSION: "2.39.8"
     env_file: .env
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
@@ -43,7 +43,7 @@ services:
         #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
         # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
         # cannot load, so this class cannot reach production again. See DECISIONS W67.
-        N8N_VERSION: "2.40.5"
+        N8N_VERSION: "2.39.8"
     env_file: .env
     environment:
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
@@ -66,7 +66,7 @@ services:
         #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
         # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
         # cannot load, so this class cannot reach production again. See DECISIONS W67.
-        N8N_VERSION: "2.40.5"
+        N8N_VERSION: "2.39.8"
     env_file: .env
     # HO-N8N-ENVGAP 2026-08-01: N8N_BLOCK_ENV_ACCESS_IN_NODE=false REMOVED here.
     # Workers keep $env BLOCKED (Hybrid posture, admin/DECISIONS.md D12). Leaving it
@@ -94,4 +94,4 @@ services:
         #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
         # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
         # cannot load, so this class cannot reach production again. See DECISIONS W67.
-        N8N_VERSION: "2.40.5"
+        N8N_VERSION: "2.39.8"

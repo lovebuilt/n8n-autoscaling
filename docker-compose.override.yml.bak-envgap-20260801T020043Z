@@ -1,0 +1,55 @@
+# YOUR customizations on top of upstream's docker-compose.yml
+# Docker Compose auto-merges this with docker-compose.yml
+# Upstream never touches this file — no merge conflicts.
+
+services:
+  # Use YOUR generated Dockerfiles (with custom packages injected)
+  n8n:
+    build:
+      dockerfile: Dockerfile.build
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - /backups:/backups:ro
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
+      # CE1 2026-06-10: executeCommand pipeline scripts live on the host. The
+      # June-9 recreate dropped host access and silently broke the draft
+      # generator. lab = scripts+fixtures; .env read-only for LLM keys.
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+
+  n8n-webhook:
+    build:
+      dockerfile: Dockerfile.build
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+
+  n8n-worker:
+    build:
+      dockerfile: Dockerfile.build
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - /backups:/backups:ro
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+
+  # Task runner for workers (main instance doesn't need one —
+  # OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true sends all work to workers)
+  n8n-worker-runner:
+    build:
+      dockerfile: Dockerfile.runner.build

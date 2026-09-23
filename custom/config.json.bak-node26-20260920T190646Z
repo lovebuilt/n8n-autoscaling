@@ -1,0 +1,111 @@
+{
+    "_comment": "YOUR customizations. build.py reads this and injects into upstream Dockerfiles.",
+    "_updated": "2026-07-20",
+    "main": {
+        "apk_packages": [
+            "imagemagick",
+            "ca-certificates",
+            "tzdata",
+            "poppler-utils",
+            "poppler-data",
+            "ghostscript",
+            "tesseract-ocr",
+            "tesseract-ocr-data-eng",
+            "font-noto-cjk",
+            "font-dejavu",
+            "font-liberation",
+            "python3",
+            "py3-pip",
+            "yt-dlp",
+            "openssl"
+        ],
+        "lib_strategy": "broad",
+        "share_copies": [
+            "/usr/share/fonts/",
+            "/usr/share/ghostscript/",
+            "/usr/share/tessdata/"
+        ],
+        "bin_copies": [
+            "/usr/bin/magick",
+            "/usr/bin/convert",
+            "/usr/bin/identify",
+            "/usr/bin/mogrify",
+            "/usr/bin/composite",
+            "/usr/bin/pdftoppm",
+            "/usr/bin/pdftotext",
+            "/usr/bin/pdfinfo",
+            "/usr/bin/pdfimages",
+            "/usr/bin/pdfseparate",
+            "/usr/bin/pdfunite",
+            "/usr/bin/gs",
+            "/usr/bin/tesseract",
+            "/usr/bin/python3",
+            "/usr/bin/pip3",
+            "/usr/bin/yt-dlp",
+            "/usr/bin/openssl"
+        ],
+        "_npm_globals_removed": "E3 2026-06-27: in-container AI CLIs removed (ai-env bridge owns AI calls); list dropped 2026-07-20 to stop build.py re-adding them",
+        "pip_globals_pre": [
+            "yt-dlp[default]",
+            "curl_cffi"
+        ],
+        "_pip_globals_comment": "HO-TRANSCRIBE-PROCESSOR 2026-07-24: system pip in the FINAL stage installs the yt-dlp NIGHTLY channel (--pre yt-dlp[default], pulls curl_cffi for impersonation) over the stale apk yt-dlp (2026.03.17). Nightly is required for max provider coverage — the latest STABLE (2026.07.04) has Vimeo extractor rot (OAuth 401); nightly 2026.07.23+ fixes it and keeps YouTube byte-identical (proven). Prebuilt musllinux_1_2_x86_64 wheels, no build toolchain. yt-dlp script -> /usr/bin/yt-dlp, overwriting the apk one. Kept fresh between rebuilds by custom/ytdlp-refresh.sh (host cron, parity-guarded)."
+    },
+    "runner": {
+        "apk_packages": [
+            "poppler-utils",
+            "poppler-data",
+            "ghostscript",
+            "tesseract-ocr",
+            "tesseract-ocr-data-eng",
+            "font-noto-cjk",
+            "font-dejavu",
+            "font-liberation"
+        ],
+        "share_copies": [
+            "/usr/share/ghostscript/",
+            "/usr/share/tessdata/"
+        ],
+        "bin_copies": [
+            "/usr/bin/pdftoppm",
+            "/usr/bin/pdftotext",
+            "/usr/bin/pdfinfo",
+            "/usr/bin/pdfimages",
+            "/usr/bin/pdfseparate",
+            "/usr/bin/pdfunite",
+            "/usr/bin/gs",
+            "/usr/bin/tesseract"
+        ],
+        "npm_packages": [
+            "sharp"
+        ],
+        "pip_packages": [
+            "pdf2image",
+            "PyPDF2"
+        ],
+        "js_allowlist_additions": [
+            "sharp"
+        ],
+        "py_allowlist_additions": [
+            "pdf2image",
+            "PyPDF2"
+        ]
+    },
+    "compose_overrides": {
+        "_comment": "Things to ADD to upstream's docker-compose.yml via override file",
+        "n8n_extra_volumes": [
+            "/backups:/backups:ro"
+        ],
+        "worker_extra_volumes": [
+            "/backups:/backups:ro"
+        ]
+    },
+    "exclude": {
+        "npm": [
+            "pdf-poppler"
+        ],
+        "reasons": {
+            "pdf-poppler": "calls process.exit(1) on Linux, kills the runner process. Use native poppler-utils CLI instead."
+        }
+    }
+}
