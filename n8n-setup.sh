@@ -1628,7 +1628,7 @@ if [[ -z "$r" || "$r" =~ ^[Yy] ]]; then
 
     # Check Redis
     REDIS_PW=$(get_existing_value "REDIS_PASSWORD" "")
-    if $COMPOSE_CMD $COMPOSE_FILES exec -T redis redis-cli --no-auth-warning -a "$REDIS_PW" ping 2>/dev/null | grep -q "PONG"; then
+    if $COMPOSE_CMD $COMPOSE_FILES exec -T redis redis-cli --no-auth-warning ping 2>/dev/null | grep -q "PONG"; then
         echo "  ${GREEN}Redis: OK${NC}"
     else
         echo "  ${RED}Redis: FAILED${NC}"

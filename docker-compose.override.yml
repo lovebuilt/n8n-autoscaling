@@ -95,3 +95,13 @@ services:
         # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
         # cannot load, so this class cannot reach production again. See DECISIONS W67.
         N8N_VERSION: "2.41.3"
+
+  # 2026-09-30 (maintenance one-off redis-rotate.sh, Jonah): the Redis password never rides the healthcheck.
+  # Upstream runs `redis-cli -a ${REDIS_PASSWORD} ping` every second, which writes the password into `docker events`
+  # every second and into `docker inspect`. redis-cli reads REDISCLI_AUTH from the environment instead, and
+  # n8n-setup.sh`s own ping uses the same variable.
+  redis:
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
