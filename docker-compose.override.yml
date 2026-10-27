@@ -101,6 +101,9 @@ services:
   # every second and into `docker inspect`. redis-cli reads REDISCLI_AUTH from the environment instead, and
   # n8n-setup.sh`s own ping uses the same variable.
   redis:
+    # 2026-10-27 (maintenance one-off redis-unpublish.sh, HO-MAINT-REDIS, Jonah): no host publish. Every client is
+    # inside n8n-network (REDIS_HOST=redis); upstream publishes ${TAILSCALE_IP}:6379 on the tailnet and nothing used it.
+    ports: !reset []
     environment:
       - REDISCLI_AUTH=${REDIS_PASSWORD}
     healthcheck:
