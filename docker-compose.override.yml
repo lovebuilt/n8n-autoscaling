@@ -3,6 +3,9 @@
 # Upstream never touches this file — no merge conflicts.
 
 services:
+  postgres:
+    # 2026-10-29 (maintenance row small-updates --only postgres-unpublish, Jonah): no host publish. Every client is inside the stack network.
+    ports: !reset []
   # Use YOUR generated Dockerfiles (with custom packages injected)
   n8n:
     build:
