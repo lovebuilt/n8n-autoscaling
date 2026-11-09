@@ -1,0 +1,113 @@
+# YOUR customizations on top of upstream's docker-compose.yml
+# Docker Compose auto-merges this with docker-compose.yml
+# Upstream never touches this file — no merge conflicts.
+
+services:
+  postgres:
+    # 2026-10-29 (maintenance row small-updates --only postgres-unpublish, Jonah): no host publish. Every client is inside the stack network.
+    ports: !reset []
+  # Use YOUR generated Dockerfiles (with custom packages injected)
+  n8n:
+    build:
+      dockerfile: Dockerfile.build
+      args:
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.45.7"
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - /backups:/backups:ro
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
+      # CE1 2026-06-10: executeCommand pipeline scripts live on the host. The
+      # June-9 recreate dropped host access and silently broke the draft
+      # generator. lab = scripts+fixtures; .env read-only for LLM keys.
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+
+  n8n-webhook:
+    build:
+      dockerfile: Dockerfile.build
+      args:
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.45.7"
+    env_file: .env
+    environment:
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+
+  n8n-worker:
+    build:
+      dockerfile: Dockerfile.build
+      args:
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.45.7"
+    env_file: .env
+    # HO-N8N-ENVGAP 2026-08-01: N8N_BLOCK_ENV_ACCESS_IN_NODE=false REMOVED here.
+    # Workers keep $env BLOCKED (Hybrid posture, admin/DECISIONS.md D12). Leaving it
+    # would make host-created workers behave differently from autoscaler-created ones
+    # -- the exact nondeterminism this change exists to remove.
+    volumes:
+      - /backups:/backups:ro
+      - ./config/gemini:/root/.gemini
+      - ./config/claude:/root/.claude
+      - ./config/codex:/root/.codex
+      - /home/dev/lab:/home/dev/lab
+      - /home/dev/.env:/home/dev/.env:ro
+
+  # Task runner for workers (main instance doesn't need one —
+  # OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS=true sends all work to workers)
+  n8n-worker-runner:
+    build:
+      dockerfile: Dockerfile.runner.build
+      args:
+        # Bumped to 2.39.8 by maintenance 2026-09-20. The Node 26 blockers that held this
+        # at 2.36.8 are now handled in custom/build.py, not by pinning:
+        #   - corepack: unbundled in Node 26 -> strip_corepack() drops upstream's pin lines
+        #   - yargs/ESM: Node 26 loads extensionless files in "type":"module" pkgs as ESM,
+        #     breaking require('yargs/yargs') via @puppeteer/browsers -> node26-compat.js
+        #   - zod: our pnpm add hoisted 3.23.8 over the 3.25.76 the runner needs -> pinned
+        # An EXTERNAL-GATE build step now fails the BUILD if any allowlisted external
+        # cannot load, so this class cannot reach production again. See DECISIONS W67.
+        N8N_VERSION: "2.45.7"
+
+  # 2026-09-30 (maintenance one-off redis-rotate.sh, Jonah): the Redis password never rides the healthcheck.
+  # Upstream runs `redis-cli -a ${REDIS_PASSWORD} ping` every second, which writes the password into `docker events`
+  # every second and into `docker inspect`. redis-cli reads REDISCLI_AUTH from the environment instead, and
+  # n8n-setup.sh`s own ping uses the same variable.
+  redis:
+    # 2026-10-27 (maintenance one-off redis-unpublish.sh, HO-MAINT-REDIS, Jonah): no host publish. Every client is
+    # inside n8n-network (REDIS_HOST=redis); upstream publishes ${TAILSCALE_IP}:6379 on the tailnet and nothing used it.
+    ports: !reset []
+    environment:
+      - REDISCLI_AUTH=${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]

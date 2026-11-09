@@ -58,6 +58,13 @@ services:
       - /home/dev/.env:/home/dev/.env:ro
 
   n8n-worker:
+    # 2026-11-05 AI Selector (usage/api-picker): a model call can run up to 1 hour (the
+    # langchain proxy agent timeout). 5m killed long calls mid-stream on any worker stop.
+    # Drain timeout 3600 s, container grace 65 m so n8n finishes before Docker kills it.
+    # It only waits when a job is in flight; an idle worker still stops at once.
+    stop_grace_period: 65m
+    environment:
+      - N8N_GRACEFUL_SHUTDOWN_TIMEOUT=3600
     build:
       dockerfile: Dockerfile.build
       args:
